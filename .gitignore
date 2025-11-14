@@ -1,0 +1,13 @@
+# some testing files
+/target
+/helloworld.c
+/helloworld.ro
+/helloworld_on_c
+/helloworld_on_righton
+/helloworld_on_righton.o
+/out
+/out.o
+
+# ide files
+.idea
+.vscode
