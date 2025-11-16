@@ -87,7 +87,7 @@ fn main() {
 
     println!("LLVM Ir:\n{}", ir);
 
-    if output_path.ends_with(".o") {
+    if output_path.ends_with(".o") || output_path.ends_with(".obj") {
         output_type = "object";
         unsafe {
             println!("initializing LLVM targets…");

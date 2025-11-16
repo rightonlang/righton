@@ -11,3 +11,7 @@
 # ide files
 .idea
 .vscode
+
+# windows
+/vcpkg.json
+/build.rs

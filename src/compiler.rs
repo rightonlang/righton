@@ -57,8 +57,6 @@ impl LLVMTextGen {
         } else {
             ir.push_str(format!("; ModuleID = '{}'\n", program.name).as_str());
         }
-        ir.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n");
-        ir.push_str("target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"\n\n");
         ir.push_str("declare i32 @printf(i8*, ...)\n");
         ir.push_str("declare i32 @sprintf(i8*, i8*, ...)\n");
         ir.push_str("declare double @llvm.pow.f64(double, double)\n");

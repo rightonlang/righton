@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] }
-llvm-sys = { version = "181.2.0", features = ["prefer-static"] }
+llvm-sys = { version = "201.0.0", features = ["prefer-static"] }
