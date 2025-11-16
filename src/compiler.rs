@@ -203,11 +203,6 @@ impl LLVMTextGen {
         locals: &mut HashMap<String, (Type, String, bool)>,
         return_ty: &str,
     ) {
-        if matches!(expr, Expr::Identifier(_)) || matches!(expr, Expr::Binary(_, _, _)) {
-            eprintln!("DEBUG: обработка выражения: {:?}", expr);
-            eprintln!("DEBUG: locals = {:?}", locals.keys().collect::<Vec<_>>());
-            eprintln!("DEBUG: params = {:?}", params);
-        }
         match expr {
             Expr::Let {
                 name,
@@ -215,24 +210,20 @@ impl LLVMTextGen {
                 value,
                 is_const,
             } => {
-                eprintln!(
-                    "DEBUG: объявление переменной '{}', тип: {:?}, is_const: {}",
-                    name, typ, is_const
-                );
                 let alloca = self.next_temp();
 
                 let var_type = if let Some(t) = typ {
                     match t.as_str() {
                         "i32" => Type::I32,
                         "str" | "string" | "ptr" => Type::Ptr,
-                        _ => panic!("неподдерживаемый тип: {}", t),
+                        _ => panic!("unsupported type: {}", t),
                     }
                 } else {
                     let inferred = self.infer_expr_type(value, params, locals);
                     match inferred {
                         "i32" => Type::I32,
                         "i8*" => Type::Ptr,
-                        _ => panic!("не удалось вывести тип для переменной {}", name),
+                        _ => panic!("couldn't output the type for the variable {}", name),
                     }
                 };
 
@@ -263,7 +254,7 @@ impl LLVMTextGen {
                             Expr::Identifier(id_name) => {
                                 self.emit_print_arg(value, params, locals, &ptr);
                             }
-                            _ => panic!("let: ожидалось строковое выражение для типа ptr/str"),
+                            _ => panic!("let: expected str expression for type ptr/str"),
                         }
                         writeln!(&mut self.functions, "  %{} = alloca i8*", alloca).unwrap();
                         writeln!(
@@ -273,10 +264,6 @@ impl LLVMTextGen {
                         )
                         .unwrap();
                         locals.insert(name.clone(), (Type::Ptr, alloca.clone(), *is_const));
-                        eprintln!(
-                            "DEBUG: после insert — locals = {:?}",
-                            locals.keys().collect::<Vec<_>>()
-                        );
                     }
                 }
             }
@@ -284,10 +271,10 @@ impl LLVMTextGen {
             Expr::Assign { name, value } => {
                 let (var_ty, alloca, is_const) = locals
                     .get(name)
-                    .unwrap_or_else(|| panic!("присвоение неизвестной переменной: {}", name));
+                    .unwrap_or_else(|| panic!("assign of unknown variable: {}", name));
 
                 if *is_const {
-                    panic!("нельзя присваивать const-переменной: {}", name);
+                    panic!("cannot assign to const-variable: {}", name);
                 }
 
                 match var_ty {
@@ -312,7 +299,7 @@ impl LLVMTextGen {
                             Expr::FString(elements) => {
                                 self.emit_fstring(elements, params, locals, &ptr);
                             }
-                            _ => panic!("присвоение: ожидалась строка"),
+                            _ => panic!("assign: expected str"),
                         }
                         writeln!(
                             &mut self.functions,
@@ -361,11 +348,11 @@ impl LLVMTextGen {
                         Expr::Identifier(name) => {
                             self.emit_print_arg(inner, params, locals, &ptr);
                         }
-                        _ => panic!("return: неподдерживаемое строковое выражение"),
+                        _ => panic!("return: unsupported str expression"),
                     }
                     writeln!(&mut self.functions, "  ret i8* %{}", ptr).unwrap();
                 } else {
-                    panic!("return: несоответствие типов");
+                    panic!("return: types mismatch");
                 }
             }
 
@@ -489,10 +476,10 @@ impl LLVMTextGen {
                         parts.push("%s".to_string());
                         args.push(format!("i8* %arg{}", idx));
                     } else {
-                        panic!("fstring: неизвестная переменная {}", name);
+                        panic!("fstring: unknown variable {}", name);
                     }
                 }
-                _ => panic!("fstring: неподдерживаемый элемент"),
+                _ => panic!("fstring: unsupported element"),
             }
         }
 
@@ -541,7 +528,7 @@ impl LLVMTextGen {
                         }
                         Type::Ptr => {
                             panic!(
-                                "переменная '{}' имеет тип строки, но используется в числовом контексте",
+                                "variable '{}' has a string type, but is used in a numeric context.",
                                 name
                             );
                         }
@@ -550,19 +537,19 @@ impl LLVMTextGen {
 
                 if let Some(idx) = params.iter().position(|p| p == name) {
                     panic!(
-                        "параметр функции '{}' имеет тип строки (i8*), но используется в числовом контексте",
+                        "The function parameter '{}' has a string type (i8*), but is used in a numeric context",
                         name
                     );
                 }
 
                 if self.global_vars.contains_key(name) {
                     panic!(
-                        "глобальная переменная '{}' имеет тип строки, но используется в числовом контексте",
+                        "The global variable '{}' has a string type, but is used in a numeric context",
                         name
                     );
                 }
 
-                panic!("неизвестная переменная в числовом контексте: '{}'", name);
+                panic!("an unknown variable in a numeric context: '{}'", name);
             }
 
             Expr::Unary(op, inner) => {
@@ -750,7 +737,7 @@ impl LLVMTextGen {
                 Val::Reg(res)
             }
 
-            _ => panic!("неожиданное выражение в int-контексте: {:?}", expr),
+            _ => panic!("unexpected expression in int-context: {:?}", expr),
         }
     }
 
@@ -822,10 +809,10 @@ impl LLVMTextGen {
                     )
                     .unwrap();
                 } else {
-                    panic!("неизвестная переменная: {}", name);
+                    panic!("unknown variable: {}", name);
                 }
             }
-            _ => panic!("print: неподдерживаемый аргумент"),
+            _ => panic!("print: unsupported argument"),
         }
     }
 
@@ -850,7 +837,7 @@ impl LLVMTextGen {
         let code = if let Expr::StringLiteral(s) = &args[0] {
             s
         } else {
-            panic!("asm: первый аргумент — строка");
+            panic!("asm: first argument is a str");
         };
 
         if args.len() == 1 {
@@ -888,10 +875,10 @@ impl LLVMTextGen {
                     constraints.push_str("r");
                     operands.push_str(&format!("i8* %arg{}", idx));
                 } else {
-                    panic!("asm: неизвестная переменная {}", name);
+                    panic!("asm: unknown variable {}", name);
                 }
             } else {
-                panic!("asm: аргументы должны быть идентификаторами");
+                panic!("asm: arguments must be identifiers");
             }
         }
 

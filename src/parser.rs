@@ -17,7 +17,8 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) {
-        self.current = Some(self.lexer.next_token().kind);
+        let tok = self.lexer.next_token();
+        self.current = Some(tok.kind);
     }
 
     fn eat(&mut self, expected: TokenKind) {
@@ -25,8 +26,15 @@ impl<'a> Parser<'a> {
             self.advance();
         } else if self.current == Some(TokenKind::Newline) {
             self.advance();
+            self.eat(expected);
         } else {
-            panic!("ожидалось {:?}, но получен {:?}", expected, self.current);
+            panic!(
+                "expected {:?}, but given {:?} (line={}, col={})",
+                expected,
+                self.current,
+                self.lexer.line,
+                self.lexer.column
+            );
         }
     }
 
@@ -41,9 +49,6 @@ impl<'a> Parser<'a> {
             | Some(TokenKind::LessEqual)
             | Some(TokenKind::Greater)
             | Some(TokenKind::GreaterEqual) => 10,
-            Some(TokenKind::Identifier(_))
-            | Some(TokenKind::IntLiteral(_))
-            | Some(TokenKind::LParen) => 50,
             _ => -1,
         }
     }
@@ -87,33 +92,27 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.parse_fstring(&s)
             }
-            _ => panic!("ожидалось первичное выражение, найдено {:?}", self.current),
+            _ => panic!("expected primary expression, found {:?}", self.current),
         }
     }
 
     fn parse_if_expr(&mut self) -> Expr {
         self.eat(TokenKind::If);
         let condition = Box::new(self.parse_expr());
-
         self.eat(TokenKind::Colon);
 
-        let then_branch = self.parse_block().unwrap_or_else(|e| {
-            panic!("ошибка в then-блоке if: {}", e);
-        });
+        let then_branch = self.parse_block().expect("error in the then-block if");
 
         let else_branch = if self.current == Some(TokenKind::Else) {
             self.advance();
+            self.eat(TokenKind::Colon);
 
             if self.current == Some(TokenKind::If) {
-                let nested = self.parse_if_expr();
-                Some(Box::new(Block {
-                    stmts: vec![nested],
-                }))
+                let nested_if = self.parse_if_expr();
+                Some(Box::new(Block { stmts: vec![nested_if] }))
             } else {
-                self.eat(TokenKind::Colon);
-                Some(Box::new(self.parse_block().unwrap_or_else(|e| {
-                    panic!("ошибка в else-блоке: {}", e);
-                })))
+                let else_block = self.parse_block().expect("error in else-block");
+                Some(Box::new(else_block))
             }
         } else {
             None
@@ -135,6 +134,10 @@ impl<'a> Parser<'a> {
                 self.advance();
             }
 
+            if self.current == Some(TokenKind::Eof) {
+                break;
+            }
+
             match self.current.clone() {
                 Some(TokenKind::Fn) => functions.push(self.parse_function()),
                 Some(TokenKind::Let)
@@ -147,13 +150,19 @@ impl<'a> Parser<'a> {
                 | Some(TokenKind::StringLiteral(_))
                 | Some(TokenKind::MultilineString(_))
                 | Some(TokenKind::If)
-                | Some(TokenKind::Else)
                 | Some(TokenKind::EqualEqual)
                 | Some(TokenKind::FString(_)) => {
                     globals.push(self.parse_expr());
                 }
-                Some(TokenKind::Eof) => break,
-                other => panic!("ожидалось определение функции, но найден {:?}", other),
+                Some(tok) => {
+                    panic!(
+                        "expected define of the function or expression, but found {:?} (line={}, col={})",
+                        tok,
+                        self.lexer.line,
+                        self.lexer.column
+                    );
+                }
+                None => break,
             }
         }
 
@@ -161,7 +170,7 @@ impl<'a> Parser<'a> {
             globals,
             functions,
             profile,
-            name
+            name,
         }
     }
 
@@ -172,48 +181,32 @@ impl<'a> Parser<'a> {
             self.advance();
         }
 
-        let base_indent = self.lexer.column;
-        if base_indent == 0 {
-            return Err("блок должен иметь отступ".into());
+        match self.current {
+            Some(TokenKind::Else) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
+                return Ok(Block { stmts });
+            }
+            _ => {}
         }
 
-        while self.current == Some(TokenKind::Newline) {
-            self.advance();
-        }
-
-        let base_indent = self.lexer.column;
-
-        while let Some(tok) = &self.current {
-            if self.lexer.column < base_indent && *tok != TokenKind::Newline {
-                break;
-            }
-
-            if *tok == TokenKind::Newline {
-                self.advance();
-                continue;
-            }
-
-            match tok {
-                TokenKind::If
-                | TokenKind::Let
-                | TokenKind::Const
-                | TokenKind::Return
-                | TokenKind::Identifier(_)
-                | TokenKind::IntLiteral(_)
-                | TokenKind::LParen
-                | TokenKind::Plus
-                | TokenKind::Minus
-                | TokenKind::StringLiteral(_)
-                | TokenKind::MultilineString(_)
-                | TokenKind::FString(_) => {
-                    stmts.push(self.parse_expr());
-                }
-                _ => break,
-            }
-
+        loop {
             while self.current == Some(TokenKind::Newline) {
                 self.advance();
+                match self.current {
+                    Some(TokenKind::Else) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
+                        return Ok(Block { stmts });
+                    }
+                    _ => {}
+                }
             }
+
+            match self.current {
+                Some(TokenKind::Else) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => break,
+                None => break,
+                _ => {}
+            }
+
+            let expr = self.parse_expr();
+            stmts.push(expr);
         }
 
         Ok(Block { stmts })
@@ -226,7 +219,7 @@ impl<'a> Parser<'a> {
             self.advance();
             n
         } else {
-            panic!("ожидалось имя функции");
+            panic!("expected name of the function");
         };
 
         self.eat(TokenKind::LParen);
@@ -234,13 +227,16 @@ impl<'a> Parser<'a> {
         while let Some(TokenKind::Identifier(p)) = self.current.clone() {
             params.push(p);
             self.advance();
+            if self.current == Some(TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
         }
         self.eat(TokenKind::RParen);
         self.eat(TokenKind::Colon);
 
-        let block = self.parse_block().unwrap_or_else(|e| {
-            panic!("ошибка при парсинге тела функции {}: {}", name, e);
-        });
+        let block = self.parse_block().expect(&format!("error when parsing body of a function {}", name));
 
         FunctionDef {
             name,
@@ -256,15 +252,18 @@ impl<'a> Parser<'a> {
             if prec < min_prec {
                 break;
             }
+
             let is_implicit = matches!(
                 op_opt,
                 Some(TokenKind::Identifier(_))
                     | Some(TokenKind::IntLiteral(_))
                     | Some(TokenKind::LParen)
             );
+
             if !is_implicit {
                 self.advance();
             }
+
             let binop = if is_implicit {
                 BinOp::Mul
             } else {
@@ -281,11 +280,12 @@ impl<'a> Parser<'a> {
                     Some(TokenKind::LessEqual) => BinOp::Le,
                     Some(TokenKind::Greater) => BinOp::Gt,
                     Some(TokenKind::GreaterEqual) => BinOp::Ge,
-
-                    _ => panic!("неизвестный оператор: {:?}", op_opt),
+                    _ => panic!("unknown operator: {:?}", op_opt),
                 }
             };
+
             let mut right = self.parse_primary();
+
             loop {
                 let next_prec = Self::get_precedence(&self.current);
                 if next_prec > prec {
@@ -294,6 +294,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
+
             left = Expr::Binary(Box::new(left), binop, Box::new(right));
         }
         left
@@ -306,6 +307,13 @@ impl<'a> Parser<'a> {
 
         match self.current.clone() {
             Some(TokenKind::If) => self.parse_if_expr(),
+            Some(TokenKind::Else) => {
+                panic!(
+                    "syntax error: 'else' without 'if' (line={}, col={})",
+                    self.lexer.line,
+                    self.lexer.column
+                );
+            }
             Some(TokenKind::Const) | Some(TokenKind::Let) => {
                 let is_const = self.current == Some(TokenKind::Const);
                 self.advance();
@@ -313,19 +321,21 @@ impl<'a> Parser<'a> {
                     self.advance();
                     n
                 } else {
-                    panic!("ожидалось имя переменной");
+                    panic!("expected name of the variable");
                 };
+
                 let typ = if self.current == Some(TokenKind::Colon) {
                     self.advance();
                     if let Some(TokenKind::Identifier(t)) = self.current.clone() {
                         self.advance();
                         Some(t)
                     } else {
-                        panic!("ожидался тип после :");
+                        panic!("expected type after :");
                     }
                 } else {
                     None
                 };
+
                 self.eat(TokenKind::Equal);
                 let value = Box::new(self.parse_expr());
                 Expr::Let {
@@ -337,56 +347,16 @@ impl<'a> Parser<'a> {
             }
             Some(TokenKind::Return) => {
                 self.advance();
-
-                if self.current == Some(TokenKind::Newline) || self.current == Some(TokenKind::Eof)
-                {
+                if self.current == Some(TokenKind::Newline) || self.current == Some(TokenKind::Eof) {
                     Expr::Return(Box::new(Expr::Literal(Literal::Int(0))))
                 } else {
                     let value = Box::new(self.parse_expr());
                     Expr::Return(value)
                 }
             }
-            Some(tok) => match tok {
-                TokenKind::Identifier(_)
-                | TokenKind::IntLiteral(_)
-                | TokenKind::LParen
-                | TokenKind::Plus
-                | TokenKind::Minus
-                | TokenKind::StringLiteral(_)
-                | TokenKind::MultilineString(_)
-                | TokenKind::FString(_) => {
-                    let mut left = self.parse_primary();
-                    if let Expr::Identifier(name) = &left {
-                        match self.current.clone() {
-                            Some(TokenKind::Equal) => {
-                                self.advance();
-                                let value = Box::new(self.parse_expr());
-                                left = Expr::Assign {
-                                    name: name.clone(),
-                                    value,
-                                };
-                            }
-                            Some(TokenKind::LParen) => {
-                                self.advance();
-                                let mut args = Vec::new();
-                                while self.current != Some(TokenKind::RParen) {
-                                    args.push(self.parse_expr());
-                                }
-                                self.eat(TokenKind::RParen);
-                                left = Expr::Call {
-                                    func: name.clone(),
-                                    args,
-                                };
-                            }
-                            _ => {}
-                        }
-                    }
-                    self.parse_binary(left, 0)
-                }
-                _ => panic!("ожидалось первичное выражение, найдено {:?}", self.current),
-            },
-            _ => {
+            Some(tok) => {
                 let mut left = self.parse_primary();
+
                 if let Expr::Identifier(name) = &left {
                     match self.current.clone() {
                         Some(TokenKind::Equal) => {
@@ -402,6 +372,11 @@ impl<'a> Parser<'a> {
                             let mut args = Vec::new();
                             while self.current != Some(TokenKind::RParen) {
                                 args.push(self.parse_expr());
+                                if self.current == Some(TokenKind::Comma) {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
                             }
                             self.eat(TokenKind::RParen);
                             left = Expr::Call {
@@ -412,8 +387,10 @@ impl<'a> Parser<'a> {
                         _ => {}
                     }
                 }
+
                 self.parse_binary(left, 0)
             }
+            _ => panic!("unexpected token in expression: {:?}", self.current),
         }
     }
 

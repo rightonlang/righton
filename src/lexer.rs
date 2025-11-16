@@ -29,6 +29,8 @@ pub enum TokenKind {
     LessEqual,
     Greater,
     GreaterEqual,
+    Comma,
+    Dot,
 }
 
 #[derive(Debug, Clone)]
@@ -42,8 +44,9 @@ pub struct Token {
 pub struct Lexer {
     src: Vec<char>,
     pos: usize,
-    line: usize,
+    pub(crate) line: usize,
     pub(crate) column: usize,
+    pub current_line_indent: usize,
 }
 
 impl Lexer {
@@ -53,6 +56,7 @@ impl Lexer {
             pos: 0,
             line: 1,
             column: 0,
+            current_line_indent: 0,
         }
     }
 
@@ -67,6 +71,7 @@ impl Lexer {
             if ch == '\n' {
                 self.line += 1;
                 self.column = 0;
+                self.current_line_indent = 0;
             } else {
                 self.column += 1;
             }
@@ -77,7 +82,16 @@ impl Lexer {
     fn skip_unnecessary(&mut self) {
         loop {
             match self.peek() {
-                Some(' ' | '\t') => {
+                Some(' ') => {
+                    if self.column == self.current_line_indent {
+                        self.current_line_indent += 1;
+                    }
+                    self.next();
+                }
+                Some('\t') => {
+                    if self.column == self.current_line_indent {
+                        self.current_line_indent += 4;
+                    }
                     self.next();
                 }
                 Some('/') => {
@@ -116,6 +130,16 @@ impl Lexer {
         match ch {
             ':' => Token {
                 kind: TokenKind::Colon,
+                line: self.line,
+                column: start_col,
+            },
+            ',' => Token {
+                kind: TokenKind::Comma,
+                line: self.line,
+                column: start_col,
+            },
+            '.' => Token {
+                kind: TokenKind::Dot,
                 line: self.line,
                 column: start_col,
             },
@@ -300,7 +324,7 @@ impl Lexer {
                         column: start_col,
                     }
                 } else {
-                    panic!("неизвестный символ '!'");
+                    panic!("unknown symbol '!'");
                 }
             }
             '<' => {
@@ -380,7 +404,7 @@ impl Lexer {
             }
             _ => {
                 eprintln!(
-                    "неизвестный символ '{}' на {}:{}",
+                    "unknown symbol '{}' on {}:{}",
                     ch, self.line, self.column
                 );
                 self.next_token()
