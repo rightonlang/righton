@@ -1,4 +1,4 @@
-use crate::Cli;
+use crate::CompileObjectOptions;
 use llvm_sys::core::{
     LLVMContextCreate, LLVMContextDispose, LLVMCreateMemoryBufferWithMemoryRangeCopy,
     LLVMDisposeMessage, LLVMDisposeModule,
@@ -12,7 +12,12 @@ use llvm_sys::target_machine::{
 use std::ffi::{CStr, CString};
 use std::ptr;
 
-pub(crate) fn compile_object(cli: Cli, ir: String, output_path: String, name: String) {
+pub fn compile_object(
+    cli: &CompileObjectOptions,
+    ir: String,
+    output_path: String,
+    name: String,
+) -> Result<(), String> {
     let default_triple = unsafe {
         let ptr = LLVMGetDefaultTargetTriple();
         let s = CStr::from_ptr(ptr).to_str().unwrap().to_string();
@@ -20,10 +25,10 @@ pub(crate) fn compile_object(cli: Cli, ir: String, output_path: String, name: St
         s
     };
 
-    let triple_str = cli.target.unwrap_or(default_triple);
+    let triple_str = cli.target.clone().unwrap_or(default_triple);
     let triple = CString::new(triple_str.clone()).unwrap();
 
-    let cpu = CString::new(cli.cpu.unwrap_or("generic".to_string())).unwrap();
+    let cpu = CString::new(cli.cpu.clone().unwrap_or("generic".to_string())).unwrap();
     let features = CString::new("").unwrap();
 
     let mut target = ptr::null_mut();
@@ -32,9 +37,9 @@ pub(crate) fn compile_object(cli: Cli, ir: String, output_path: String, name: St
     unsafe {
         if LLVMGetTargetFromTriple(triple.as_ptr(), &mut target, &mut error) != 0 {
             let msg = CStr::from_ptr(error).to_string_lossy();
-            eprintln!("Target not found for triple '{}': {}", triple_str, msg);
+            let out = format!("Target not found for triple '{}': {}", triple_str, msg);
             LLVMDisposeMessage(error);
-            return;
+            return Err(out);
         }
     }
 
@@ -64,17 +69,18 @@ pub(crate) fn compile_object(cli: Cli, ir: String, output_path: String, name: St
     };
 
     if target_machine.is_null() {
-        panic!("Failed to create target machine for triple '{}'", triple_str);
+        return Err(format!("Failed to create target machine for triple '{}'", triple_str));
     }
 
     let output_file = CString::new(output_path.clone()).unwrap();
+    let name_cstr = CString::new(name).unwrap();
 
     let context = unsafe { LLVMContextCreate() };
     let mem_buf = unsafe {
         LLVMCreateMemoryBufferWithMemoryRangeCopy(
             ir.as_ptr() as *const i8,
             ir.len(),
-            format!("{}\0", name).as_ptr() as *const i8,
+            name_cstr.as_ptr(),
         )
     };
 
@@ -85,7 +91,7 @@ pub(crate) fn compile_object(cli: Cli, ir: String, output_path: String, name: St
         unsafe { LLVMParseIRInContext(context, mem_buf, &mut module_ptr, &mut parse_error) };
     if parse_result != 0 {
         let msg = unsafe { CStr::from_ptr(parse_error).to_string_lossy() };
-        panic!("Failed to parse IR: {}", msg);
+        return Err(format!("Failed to parse IR: {}", msg));
     }
 
     let mut emit_error = ptr::null_mut();
@@ -101,8 +107,14 @@ pub(crate) fn compile_object(cli: Cli, ir: String, output_path: String, name: St
 
     if emit_result != 0 {
         let msg = unsafe { CStr::from_ptr(emit_error).to_string_lossy() };
-        eprintln!("Failed to emit object file: {}", msg);
+        let err = format!("Failed to emit object file: {}", msg);
         unsafe { LLVMDisposeMessage(emit_error) };
+        unsafe {
+            LLVMDisposeModule(module_ptr);
+            LLVMContextDispose(context);
+            LLVMDisposeTargetMachine(target_machine);
+        }
+        return Err(err);
     }
 
     unsafe {
@@ -110,4 +122,6 @@ pub(crate) fn compile_object(cli: Cli, ir: String, output_path: String, name: St
         LLVMContextDispose(context);
         LLVMDisposeTargetMachine(target_machine);
     }
+
+    Ok(())
 }

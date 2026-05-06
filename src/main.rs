@@ -1,12 +1,9 @@
-mod ast;
-mod compiler;
-mod lexer;
-mod llvm;
-mod parser;
-
 use clap::Parser;
-use compiler::*;
-use lexer::*;
+use righton::compiler::LLVMTextGen;
+use righton::lexer::Lexer;
+use righton::llvm;
+use righton::parser;
+use righton::CompileObjectOptions;
 use llvm_sys::target::{
     LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs,
     LLVM_InitializeAllTargets,
@@ -37,76 +34,84 @@ struct Cli {
 }
 
 fn main() {
+    if let Err(err) = run() {
+        eprintln!("Error: {}", err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
     let cli = Cli::parse();
 
     let input_path = match cli.input {
-        Some(ref path) => {
-            if !Path::new(path).exists() {
-                eprintln!("Error: input file '{}' does not exist.", path);
-                std::process::exit(1);
+        Some(path) => {
+            if !Path::new(&path).exists() {
+                return Err(format!("input file '{}' does not exist.", path));
             }
             path
         }
         None => {
-            eprintln!("Error: input file not specified. Use -i or --input.");
-            std::process::exit(1);
+            return Err("input file not specified. Use -i or --input.".to_string());
         }
     };
 
-    let output_path: &String = match cli.output.as_deref() {
-        Some(ref path) => &path.to_string(),
+    let output_path: String = match cli.output {
+        Some(path) => path,
         None => {
-            eprintln!("Error: output file not specified. Use -o or --output.");
-            std::process::exit(1);
+            return Err("output file not specified. Use -o or --output.".to_string());
         }
     };
 
     let profile = cli
         .profile
         .as_deref()
-        .unwrap_or(&*"debug".to_string())
+        .unwrap_or("debug")
         .to_lowercase();
     if profile != "debug" && profile != "release" {
-        eprintln!("Error: profile must be either 'debug' or 'release'.");
-        std::process::exit(1);
+        return Err("profile must be either 'debug' or 'release'.".to_string());
     }
 
-    let code = String::from_utf8(fs::read(input_path).unwrap()).unwrap();
-    let name = Path::new(input_path)
+    let code = fs::read_to_string(&input_path).map_err(|e| e.to_string())?;
+    let name = Path::new(&input_path)
         .file_stem()    
         .and_then(|s| s.to_str())
-        .unwrap();   
+        .ok_or_else(|| "failed to derive input file stem".to_string())?;
 
     let mut lexer = Lexer::new(&*code);
     let mut parser = parser::Parser::new(&mut lexer);
-    let program = parser.parse_program(profile, name.to_string());
+    let program = parser
+        .parse_program(profile, name.to_string())
+        .map_err(|e| e.to_string())?;
 
     let mut r#gen = LLVMTextGen::new();
-    let ir = r#gen.generate(&program);
-    let output_type;
+    let ir = r#gen.generate(&program).map_err(|e| e.to_string())?;
 
     println!("LLVM Ir:\n{}", ir);
 
     if output_path.ends_with(".o") || output_path.ends_with(".obj") {
-        output_type = "object";
         unsafe {
-            println!("initializing LLVM targets…");
             LLVM_InitializeAllTargetInfos();
             LLVM_InitializeAllTargets();
             LLVM_InitializeAllTargetMCs();
             LLVM_InitializeAllAsmPrinters();
         }
-        println!("LLVM targets initialized");
-        let cloned_cli = cli.clone();
-        llvm::compile_object(cloned_cli, ir.clone(), output_path.parse().unwrap(), name.to_string());
+        let options = CompileObjectOptions {
+            target: cli.target.clone(),
+            cpu: cli.cpu.clone(),
+            no_pie: cli.no_pie,
+            codegen_level: cli.codegen_level.clone(),
+        };
+        llvm::compile_object(&options, ir.clone(), output_path.clone(), name.to_string())
+            .map_err(|e| e.to_string())?;
     } else {
-        output_type = "ir";
-        fs::write(&output_path, &ir).unwrap();
+        fs::write(&output_path, &ir).map_err(|e| e.to_string())?;
     }
 
-    if output_type == "object" {
+    if output_path.ends_with(".o") || output_path.ends_with(".obj") {
         println!("object saved to {}", output_path);
-    } else if output_type == "ir" {
+    } else {
         println!("LLVM Ir saved to {}", output_path);
     }
+
+    Ok(())
 }

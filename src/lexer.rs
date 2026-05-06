@@ -14,6 +14,8 @@ pub enum TokenKind {
     Newline,
     Eof,
     IntLiteral(i32),
+    FloatLiteral(f64),
+    BoolLiteral(bool),
     Return,
     Plus,    // +
     Minus,   // -
@@ -31,6 +33,9 @@ pub enum TokenKind {
     GreaterEqual,
     Comma,
     Dot,
+    And,
+    Or,
+    Not,
 }
 
 #[derive(Debug, Clone)]
@@ -156,7 +161,7 @@ impl Lexer {
             '\n' => Token {
                 kind: TokenKind::Newline,
                 line: self.line,
-                column: start_col,
+                column: self.column,
             },
             '"' => {
                 if self.peek() == Some('"') {
@@ -165,15 +170,16 @@ impl Lexer {
                         self.next();
                         let mut s = String::new();
                         while let Some(_) = self.peek() {
-                            let c = self.next().unwrap();
-                            if c == '"'
-                                && self.peek() == Some('"')
+                            if self.peek() == Some('"')
                                 && self.src.get(self.pos + 1) == Some(&'"')
+                                && self.src.get(self.pos + 2) == Some(&'"')
                             {
+                                self.next();
                                 self.next();
                                 self.next();
                                 break;
                             }
+                            let c = self.next().unwrap();
                             s.push(c);
                         }
                         return Token {
@@ -246,15 +252,16 @@ impl Lexer {
                         self.next();
                         let mut s = String::new();
                         while let Some(_) = self.peek() {
-                            let c = self.next().unwrap();
-                            if c == '"'
-                                && self.peek() == Some('"')
+                            if self.peek() == Some('"')
                                 && self.src.get(self.pos + 1) == Some(&'"')
+                                && self.src.get(self.pos + 2) == Some(&'"')
                             {
+                                self.next();
                                 self.next();
                                 self.next();
                                 break;
                             }
+                            let c = self.next().unwrap();
                             s.push(c);
                         }
                         Token {
@@ -378,6 +385,11 @@ impl Lexer {
                     "return" => TokenKind::Return,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
+                    "true" => TokenKind::BoolLiteral(true),
+                    "false" => TokenKind::BoolLiteral(false),
+                    "and" => TokenKind::And,
+                    "or" => TokenKind::Or,
+                    "not" => TokenKind::Not,
                     _ => TokenKind::Identifier(ident),
                 };
                 Token {
@@ -387,17 +399,34 @@ impl Lexer {
                 }
             }
             c if c.is_digit(10) => {
-                let mut num = c.to_digit(10).unwrap() as i32;
+                let mut num = c.to_digit(10).unwrap() as f64;
+                let mut is_float = false;
                 while let Some(ch) = self.peek() {
                     if let Some(d) = ch.to_digit(10) {
-                        num = num * 10 + d as i32;
+                        num = num * 10.0 + d as f64;
                         self.next();
+                    } else if ch == '.' {
+                        is_float = true;
+                        self.next();
+                        let mut decimal = 0.0;
+                        let mut decimal_digits = 0;
+                        while let Some(ch) = self.peek() {
+                            if let Some(d) = ch.to_digit(10) {
+                                decimal = decimal * 10.0 + d as f64;
+                                decimal_digits += 1;
+                                self.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        num = num + decimal / 10.0_f64.powf(decimal_digits as f64);
+                        break;
                     } else {
                         break;
                     }
                 }
                 Token {
-                    kind: TokenKind::IntLiteral(num),
+                    kind: if is_float { TokenKind::FloatLiteral(num) } else { TokenKind::IntLiteral(num as i32) },
                     line: self.line,
                     column: start_col,
                 }
@@ -410,5 +439,183 @@ impl Lexer {
                 self.next_token()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokenize(input: &str) -> Vec<Token> {
+        let mut lexer = Lexer::new(input);
+        let mut tokens = Vec::new();
+        loop {
+            let token = lexer.next_token();
+            if token.kind == TokenKind::Eof {
+                break;
+            }
+            tokens.push(token);
+        }
+        tokens
+    }
+
+    #[test]
+    fn test_simple_identifier() {
+        let tokens = tokenize("x");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Identifier("x".to_string()));
+    }
+
+    #[test]
+    fn test_keywords() {
+        let tokens = tokenize("fn let const return if else");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Fn,
+                TokenKind::Let,
+                TokenKind::Const,
+                TokenKind::Return,
+                TokenKind::If,
+                TokenKind::Else,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_integer_literals() {
+        let tokens = tokenize("42 0 123456");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::IntLiteral(42),
+                TokenKind::IntLiteral(0),
+                TokenKind::IntLiteral(123456),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_operators() {
+        let tokens = tokenize("+ - * / % ** == != < <= > >=");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Percent,
+                TokenKind::StarStar,
+                TokenKind::EqualEqual,
+                TokenKind::NotEqual,
+                TokenKind::Less,
+                TokenKind::LessEqual,
+                TokenKind::Greater,
+                TokenKind::GreaterEqual,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_delimiters() {
+        let tokens = tokenize("( ) : , .");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Colon,
+                TokenKind::Comma,
+                TokenKind::Dot,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_string_literals() {
+        let tokens = tokenize(r#""hello" "world""#);
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::StringLiteral("hello".to_string()),
+                TokenKind::StringLiteral("world".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_multiline_string() {
+        let tokens = tokenize(r#""""multi
+line""""#);
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(kinds.len(), 1);
+        match &kinds[0] {
+            TokenKind::MultilineString(s) => {
+                assert_eq!(s, "multi\nline");
+            }
+            _ => panic!("expected MultilineString"),
+        }
+    }
+
+    #[test]
+    fn test_fstring() {
+        let tokens = tokenize(r#"f"hello {name}" "#);
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(kinds.len(), 1);
+        match &kinds[0] {
+            TokenKind::FString(s) => {
+                assert_eq!(s, "hello {name}");
+            }
+            _ => panic!("expected FString"),
+        }
+    }
+
+    #[test]
+    fn test_newline_tokens() {
+        let tokens = tokenize("x\ny\n");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(kinds, vec![TokenKind::Identifier("x".to_string()), TokenKind::Newline, TokenKind::Identifier("y".to_string()), TokenKind::Newline]);
+    }
+
+    #[test]
+    fn test_comments() {
+        let tokens = tokenize("x // this is a comment\ny");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(kinds, vec![TokenKind::Identifier("x".to_string()), TokenKind::Identifier("y".to_string())]);
+    }
+
+    #[test]
+    fn test_complex_expression() {
+        let tokens = tokenize("a + b * (c - 2)");
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Plus,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::Star,
+                TokenKind::LParen,
+                TokenKind::Identifier("c".to_string()),
+                TokenKind::Minus,
+                TokenKind::IntLiteral(2),
+                TokenKind::RParen,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_line_and_column() {
+        let tokens = tokenize("ab\ncd");
+        assert_eq!(tokens[0].line, 1);
+        assert_eq!(tokens[0].column, 0);
+        assert_eq!(tokens[1].line, 2);
+        assert_eq!(tokens[1].column, 0);
     }
 }

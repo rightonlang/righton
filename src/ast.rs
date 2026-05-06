@@ -1,6 +1,8 @@
 #[derive(Debug, Clone)]
 pub enum Literal {
     Int(i32),
+    Float(f64),
+    Bool(bool),
     Str(String),
 }
 
@@ -18,12 +20,15 @@ pub enum BinOp {
     Le,
     Gt,
     Ge,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
     Pos,
     Neg,
+    Not,
 }
 
 #[derive(Debug, Clone)]

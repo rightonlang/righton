@@ -6,3 +6,11 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] }
 llvm-sys = { version = "201.0.0", features = ["prefer-static"] }
+
+[lib]
+name = "righton"
+path = "src/lib.rs"
+
+[[bin]]
+name = "righton"
+path = "src/main.rs"
