@@ -210,6 +210,53 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_while_expr(&mut self) -> Result<Expr, ParseError> {
+        self.eat(TokenKind::While)?;
+        let condition = Box::new(self.parse_expr()?);
+        self.eat(TokenKind::Colon)?;
+
+        let body = self.parse_block()?;
+
+        Ok(Expr::While {
+            condition,
+            body: Box::new(body),
+        })
+    }
+
+    fn parse_for_expr(&mut self) -> Result<Expr, ParseError> {
+        self.eat(TokenKind::For)?;
+
+        let variable = if let Some(TokenKind::Identifier(name)) = self.current.clone() {
+            self.advance();
+            name
+        } else {
+            return Err(ParseError::new("expected variable name after 'for'"));
+        };
+
+        self.eat(TokenKind::Equal)?;
+
+        let iterable = Box::new(self.parse_expr()?);
+        self.eat(TokenKind::Colon)?;
+
+        let body = self.parse_block()?;
+
+        Ok(Expr::For {
+            variable,
+            iterable,
+            body: Box::new(body),
+        })
+    }
+
+    fn parse_break_expr(&mut self) -> Result<Expr, ParseError> {
+        self.eat(TokenKind::Break)?;
+        Ok(Expr::Break)
+    }
+
+    fn parse_continue_expr(&mut self) -> Result<Expr, ParseError> {
+        self.eat(TokenKind::Continue)?;
+        Ok(Expr::Continue)
+    }
+
     fn parse_import_stmt(&mut self) -> Result<Expr, ParseError> {
         self.eat(TokenKind::Import)?;
 
@@ -264,6 +311,7 @@ impl<'a> Parser<'a> {
             match self.current.clone() {
                 Some(TokenKind::Import) => globals.push(self.parse_import_stmt()?),
                 Some(TokenKind::Fn) => functions.push(self.parse_function()?),
+                Some(TokenKind::Extern) => functions.push(self.parse_extern_function()?),
                 Some(TokenKind::Let)
                 | Some(TokenKind::Const)
                 | Some(TokenKind::Identifier(_))
@@ -278,6 +326,8 @@ impl<'a> Parser<'a> {
                 | Some(TokenKind::MultilineString(_))
                 | Some(TokenKind::Ampersand)
                 | Some(TokenKind::If)
+                | Some(TokenKind::While)
+                | Some(TokenKind::For)
                 | Some(TokenKind::Return)
                 | Some(TokenKind::EqualEqual)
                 | Some(TokenKind::FString(_)) => {
@@ -360,9 +410,16 @@ impl<'a> Parser<'a> {
 
         self.eat(TokenKind::LParen)?;
         let mut params = Vec::new();
+        let mut param_types = Vec::new();
         while let Some(TokenKind::Identifier(p)) = self.current.clone() {
             params.push(p);
             self.advance();
+            if self.current == Some(TokenKind::Colon) {
+                self.advance();
+                param_types.push(Some(self.parse_type()?));
+            } else {
+                param_types.push(None);
+            }
             if self.current == Some(TokenKind::Comma) {
                 self.advance();
             } else {
@@ -370,6 +427,14 @@ impl<'a> Parser<'a> {
             }
         }
         self.eat(TokenKind::RParen)?;
+        let mut return_type = None;
+        if self.current == Some(TokenKind::Minus) {
+            self.advance();
+            if self.current == Some(TokenKind::Greater) {
+                self.advance();
+                return_type = Some(self.parse_type()?);
+            }
+        }
         self.eat(TokenKind::Colon)?;
 
         let block = self.parse_block()?;
@@ -377,8 +442,75 @@ impl<'a> Parser<'a> {
         Ok(FunctionDef {
             name,
             params,
+            param_types,
+            return_type,
             body: block.stmts,
         })
+    }
+
+    fn parse_extern_function(&mut self) -> Result<FunctionDef, ParseError> {
+        self.eat(TokenKind::Extern)?;
+        self.eat(TokenKind::Fn)?;
+
+        let name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
+            self.advance();
+            n
+        } else {
+            return Err(ParseError::new("expected name of the external function"));
+        };
+
+        self.eat(TokenKind::LParen)?;
+        let mut params = Vec::new();
+        let mut param_types = Vec::new();
+        while let Some(TokenKind::Identifier(p)) = self.current.clone() {
+            params.push(p);
+            self.advance();
+            if self.current == Some(TokenKind::Colon) {
+                self.advance();
+                param_types.push(Some(self.parse_type()?));
+            } else {
+                return Err(ParseError::new("extern function parameters must have type annotations"));
+            }
+            if self.current == Some(TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.eat(TokenKind::RParen)?;
+        let mut return_type = None;
+        if self.current == Some(TokenKind::Minus) {
+            self.advance();
+            if self.current == Some(TokenKind::Greater) {
+                self.advance();
+                return_type = Some(self.parse_type()?);
+            }
+        }
+
+        Ok(FunctionDef {
+            name,
+            params,
+            param_types,
+            return_type,
+            body: Vec::new(),
+        })
+    }
+
+    fn parse_type(&mut self) -> Result<String, ParseError> {
+        match self.current.clone() {
+            Some(TokenKind::Identifier(s)) => {
+                let type_name = s;
+                self.advance();
+                Ok(type_name)
+            }
+            Some(tok) => Err(ParseError::new(format!(
+                "expected type annotation but found {:?} (line={}, col={})",
+                tok,
+                self.lexer.line,
+                self.lexer.column
+            ))),
+            None => Err(ParseError::new("expected type annotation")),
+        }
     }
 
     fn parse_binary(&mut self, mut left: Expr, min_prec: i32) -> Result<Expr, ParseError> {
@@ -456,6 +588,10 @@ impl<'a> Parser<'a> {
 
         match self.current.clone() {
             Some(TokenKind::If) => self.parse_if_expr(),
+            Some(TokenKind::While) => self.parse_while_expr(),
+            Some(TokenKind::For) => self.parse_for_expr(),
+            Some(TokenKind::Break) => self.parse_break_expr(),
+            Some(TokenKind::Continue) => self.parse_continue_expr(),
             Some(TokenKind::Else) => Err(ParseError::with_location(
                 "syntax error: 'else' without 'if'",
                 self.lexer.line,
@@ -541,6 +677,37 @@ impl<'a> Parser<'a> {
                         }
                         _ => {}
                     }
+                }
+
+                // Method call syntax: receiver.method(args)
+                while self.current == Some(TokenKind::Dot) {
+                    self.advance();
+                    let method = if let Some(TokenKind::Identifier(m)) = self.current.clone() {
+                        self.advance();
+                        m
+                    } else {
+                        return Err(ParseError::new(format!(
+                            "expected method name after '.' (line={}, col={})",
+                            self.lexer.line, self.lexer.column
+                        )));
+                    };
+                    let mut args = vec![left];
+                    if self.current == Some(TokenKind::LParen) {
+                        self.advance();
+                        while self.current != Some(TokenKind::RParen) {
+                            args.push(self.parse_expr()?);
+                            if self.current == Some(TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.eat(TokenKind::RParen)?;
+                    }
+                    left = Expr::Call {
+                        func: method,
+                        args,
+                    };
                 }
 
                 self.parse_binary(left, 0)

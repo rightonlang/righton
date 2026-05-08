@@ -58,6 +58,8 @@ Supported operators:
 
 ## Control Flow
 
+### If/Else Statements
+
 ```text
 if x > 0:
     return 1
@@ -67,6 +69,76 @@ else:
 
 - `if` expressions can include an `else` block
 - Nested `if` chains are supported
+
+### While Loops
+
+```text
+let counter = 5
+while counter > 0:
+    counter = counter - 1
+```
+
+- `while` loops execute while a condition is true
+- The condition is checked at the beginning of each iteration
+- Loop variable must be initialized before the loop
+- Supports `break` and `continue` statements
+
+### For Loops
+
+```text
+for i = 5:
+    // loop body executes 5 times
+    // i is the loop counter (i = 5, 4, 3, 2, 1)
+```
+
+- `for` loops iterate for a fixed number of iterations
+- The loop counter (e.g., `i`) is created by the loop
+- The counter decrements from the specified value to 1
+- The loop variable is only accessible within the loop body
+- Supports `break` and `continue` statements
+
+### Break Statement
+
+```text
+for i = 10:
+    if i == 5:
+        break
+    // continues here
+```
+
+- `break` exits the innermost loop immediately
+- Control flow jumps to the statement after the loop
+- Can only be used inside a loop (`while` or `for`)
+- Commonly used with conditional statements
+
+### Continue Statement
+
+```text
+while x > 0:
+    x = x - 1
+    if x == 3:
+        continue
+    print(x)
+```
+
+- `continue` skips the rest of the current iteration
+- Control flow jumps back to the loop condition check
+- Can only be used inside a loop (`while` or `for`)
+- Useful for skipping certain iterations
+
+### Nested Loops
+
+```text
+for i = 3:
+    for j = 3:
+        if j == 2:
+            break  // only breaks inner loop
+        j
+```
+
+- Loops can be nested inside each other
+- `break` and `continue` only affect the innermost loop
+- Each loop level maintains its own scope and counter
 
 ## Calls and Builtins
 

@@ -32,6 +32,8 @@ mod tests {
             functions: vec![FunctionDef {
                 name: "main".to_string(),
                 params: vec![],
+                param_types: vec![],
+                return_type: None,
                 body: vec![
                     // Test float literal
                     Expr::Let {
@@ -59,6 +61,8 @@ mod tests {
             functions: vec![FunctionDef {
                 name: "main".to_string(),
                 params: vec![],
+                param_types: vec![],
+                return_type: None,
                 body: vec![
                     // Test boolean literal
                     Expr::Let {
@@ -85,6 +89,8 @@ mod tests {
             functions: vec![FunctionDef {
                 name: "main".to_string(),
                 params: vec![],
+                param_types: vec![],
+                return_type: None,
                 body: vec![
                     // Test float arithmetic operations
                     Expr::Let {
@@ -128,6 +134,8 @@ mod tests {
             functions: vec![FunctionDef {
                 name: "main".to_string(),
                 params: vec![],
+                param_types: vec![],
+                return_type: None,
                 body: vec![
                     // Test integer arithmetic operations
                     Expr::Let {
@@ -171,6 +179,8 @@ mod tests {
             functions: vec![FunctionDef {
                 name: "main".to_string(),
                 params: vec![],
+                param_types: vec![],
+                return_type: None,
                 body: vec![
                     // Test comparison operations
                     Expr::Let {
@@ -214,6 +224,8 @@ mod tests {
             functions: vec![FunctionDef {
                 name: "main".to_string(),
                 params: vec![],
+                param_types: vec![],
+                return_type: None,
                 body: vec![
                     // Test mixing int and float (should produce float)
                     Expr::Let {
@@ -504,6 +516,1263 @@ mod tests {
         assert!(!result.status.success());
         let stderr = String::from_utf8_lossy(&result.stderr);
         assert!(stderr.contains("import std"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // WHILE LOOP TESTS
+    // ========================
+
+    #[test]
+    fn test_while_loop_codegen() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // let x = 5
+                    Expr::Let {
+                        name: "x".to_string(),
+                        typ: Some("i32".to_string()),
+                        value: Box::new(Expr::Literal(Literal::Int(5))),
+                        is_const: false,
+                    },
+                    // while x > 0:
+                    //     x = x - 1
+                    Expr::While {
+                        condition: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier("x".to_string())),
+                            BinOp::Gt,
+                            Box::new(Expr::Literal(Literal::Int(0))),
+                        )),
+                        body: Box::new(Block {
+                            stmts: vec![Expr::Assign {
+                                name: "x".to_string(),
+                                value: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier("x".to_string())),
+                                    BinOp::Sub,
+                                    Box::new(Expr::Literal(Literal::Int(1))),
+                                )),
+                            }],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        // Check for while loop labels and branching
+        assert!(llvm_ir.contains("while_start"));
+        assert!(llvm_ir.contains("while_body"));
+        assert!(llvm_ir.contains("while_end"));
+        assert!(llvm_ir.contains("icmp"));
+        assert!(llvm_ir.contains("br i1"));
+    }
+
+    #[test]
+    fn test_while_loop_with_break() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // let x = 10
+                    Expr::Let {
+                        name: "x".to_string(),
+                        typ: Some("i32".to_string()),
+                        value: Box::new(Expr::Literal(Literal::Int(10))),
+                        is_const: false,
+                    },
+                    // while x > 0:
+                    //     if x == 5:
+                    //         break
+                    //     x = x - 1
+                    Expr::While {
+                        condition: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier("x".to_string())),
+                            BinOp::Gt,
+                            Box::new(Expr::Literal(Literal::Int(0))),
+                        )),
+                        body: Box::new(Block {
+                            stmts: vec![
+                                Expr::If {
+                                    condition: Box::new(Expr::Binary(
+                                        Box::new(Expr::Identifier("x".to_string())),
+                                        BinOp::Eq,
+                                        Box::new(Expr::Literal(Literal::Int(5))),
+                                    )),
+                                    then_branch: Box::new(Block {
+                                        stmts: vec![Expr::Break],
+                                    }),
+                                    else_branch: None,
+                                },
+                                Expr::Assign {
+                                    name: "x".to_string(),
+                                    value: Box::new(Expr::Binary(
+                                        Box::new(Expr::Identifier("x".to_string())),
+                                        BinOp::Sub,
+                                        Box::new(Expr::Literal(Literal::Int(1))),
+                                    )),
+                                },
+                            ],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        assert!(llvm_ir.contains("while_start"));
+        assert!(llvm_ir.contains("while_end"));
+        // break should branch to the loop end label
+        assert!(llvm_ir.contains("br label %while_end"));
+    }
+
+    #[test]
+    fn test_while_loop_with_continue() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // let x = 3
+                    Expr::Let {
+                        name: "x".to_string(),
+                        typ: Some("i32".to_string()),
+                        value: Box::new(Expr::Literal(Literal::Int(3))),
+                        is_const: false,
+                    },
+                    // while x > 0:
+                    //     if x == 2:
+                    //         continue
+                    //     x = x - 1
+                    Expr::While {
+                        condition: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier("x".to_string())),
+                            BinOp::Gt,
+                            Box::new(Expr::Literal(Literal::Int(0))),
+                        )),
+                        body: Box::new(Block {
+                            stmts: vec![
+                                Expr::If {
+                                    condition: Box::new(Expr::Binary(
+                                        Box::new(Expr::Identifier("x".to_string())),
+                                        BinOp::Eq,
+                                        Box::new(Expr::Literal(Literal::Int(2))),
+                                    )),
+                                    then_branch: Box::new(Block {
+                                        stmts: vec![Expr::Continue],
+                                    }),
+                                    else_branch: None,
+                                },
+                                Expr::Assign {
+                                    name: "x".to_string(),
+                                    value: Box::new(Expr::Binary(
+                                        Box::new(Expr::Identifier("x".to_string())),
+                                        BinOp::Sub,
+                                        Box::new(Expr::Literal(Literal::Int(1))),
+                                    )),
+                                },
+                            ],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        assert!(llvm_ir.contains("while_start"));
+        // continue should branch back to the loop start label
+        assert!(llvm_ir.contains("br label %while_start"));
+    }
+
+    // ========================
+    // FOR LOOP TESTS
+    // ========================
+
+    #[test]
+    fn test_for_loop_codegen() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // for i = 5:
+                    //     (body)
+                    Expr::For {
+                        variable: "i".to_string(),
+                        iterable: Box::new(Expr::Literal(Literal::Int(5))),
+                        body: Box::new(Block {
+                            stmts: vec![],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        // Check for for loop labels and branching
+        assert!(llvm_ir.contains("for_start"));
+        assert!(llvm_ir.contains("for_body"));
+        assert!(llvm_ir.contains("for_end"));
+        assert!(llvm_ir.contains("alloca i32")); // Counter allocation
+        assert!(llvm_ir.contains("icmp sgt i32")); // Counter > 0 check
+        assert!(llvm_ir.contains("sub i32")); // Decrement counter
+    }
+
+    #[test]
+    fn test_for_loop_with_break() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // for i = 10:
+                    //     if i == 5:
+                    //         break
+                    Expr::For {
+                        variable: "i".to_string(),
+                        iterable: Box::new(Expr::Literal(Literal::Int(10))),
+                        body: Box::new(Block {
+                            stmts: vec![Expr::If {
+                                condition: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier("i".to_string())),
+                                    BinOp::Eq,
+                                    Box::new(Expr::Literal(Literal::Int(5))),
+                                )),
+                                then_branch: Box::new(Block {
+                                    stmts: vec![Expr::Break],
+                                }),
+                                else_branch: None,
+                            }],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        assert!(llvm_ir.contains("for_end"));
+        // break should branch to the loop end label
+        assert!(llvm_ir.contains("br label %for_end"));
+    }
+
+    #[test]
+    fn test_for_loop_with_continue() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // for i = 5:
+                    //     if i == 3:
+                    //         continue
+                    Expr::For {
+                        variable: "i".to_string(),
+                        iterable: Box::new(Expr::Literal(Literal::Int(5))),
+                        body: Box::new(Block {
+                            stmts: vec![Expr::If {
+                                condition: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier("i".to_string())),
+                                    BinOp::Eq,
+                                    Box::new(Expr::Literal(Literal::Int(3))),
+                                )),
+                                then_branch: Box::new(Block {
+                                    stmts: vec![Expr::Continue],
+                                }),
+                                else_branch: None,
+                            }],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        assert!(llvm_ir.contains("for_start"));
+        // continue should branch back to the loop start label
+        assert!(llvm_ir.contains("br label %for_start"));
+    }
+
+    // ========================
+    // NESTED LOOP TESTS
+    // ========================
+
+    #[test]
+    fn test_nested_loops_with_break() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // for i = 3:
+                    //     for j = 3:
+                    //         if j == 2:
+                    //             break
+                    Expr::For {
+                        variable: "i".to_string(),
+                        iterable: Box::new(Expr::Literal(Literal::Int(3))),
+                        body: Box::new(Block {
+                            stmts: vec![Expr::For {
+                                variable: "j".to_string(),
+                                iterable: Box::new(Expr::Literal(Literal::Int(3))),
+                                body: Box::new(Block {
+                                    stmts: vec![Expr::If {
+                                        condition: Box::new(Expr::Binary(
+                                            Box::new(Expr::Identifier("j".to_string())),
+                                            BinOp::Eq,
+                                            Box::new(Expr::Literal(Literal::Int(2))),
+                                        )),
+                                        then_branch: Box::new(Block {
+                                            stmts: vec![Expr::Break],
+                                        }),
+                                        else_branch: None,
+                                    }],
+                                }),
+                            }],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        // Should have nested loop labels
+        assert!(llvm_ir.contains("for_start"));
+        assert!(llvm_ir.contains("for_body"));
+        assert!(llvm_ir.contains("for_end"));
+        // Break in inner loop should only exit the inner loop
+        assert!(llvm_ir.contains("br label %for_end"));
+    }
+
+    #[test]
+    fn test_nested_loops_with_continue() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    // for i = 2:
+                    //     for j = 2:
+                    //         if j == 1:
+                    //             continue
+                    Expr::For {
+                        variable: "i".to_string(),
+                        iterable: Box::new(Expr::Literal(Literal::Int(2))),
+                        body: Box::new(Block {
+                            stmts: vec![Expr::For {
+                                variable: "j".to_string(),
+                                iterable: Box::new(Expr::Literal(Literal::Int(2))),
+                                body: Box::new(Block {
+                                    stmts: vec![Expr::If {
+                                        condition: Box::new(Expr::Binary(
+                                            Box::new(Expr::Identifier("j".to_string())),
+                                            BinOp::Eq,
+                                            Box::new(Expr::Literal(Literal::Int(1))),
+                                        )),
+                                        then_branch: Box::new(Block {
+                                            stmts: vec![Expr::Continue],
+                                        }),
+                                        else_branch: None,
+                                    }],
+                                }),
+                            }],
+                        }),
+                    },
+                ],
+            }],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let llvm_ir = r#gen.generate(&program).unwrap();
+        // Continue in inner loop should only jump to inner loop start
+        assert!(llvm_ir.contains("br label %for_start"));
+    }
+
+    // ========================
+    // ERROR CASES
+    // ========================
+
+    #[test]
+    fn test_break_outside_loop_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    break").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        // Check for either parser error or compiler error
+        assert!(
+            stderr.contains("Break") || stderr.contains("break outside of loop"),
+            "Expected Break parse error or break outside of loop error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_continue_outside_loop_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    continue").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        // Check for either parser error or compiler error
+        assert!(
+            stderr.contains("Continue") || stderr.contains("continue outside of loop"),
+            "Expected Continue parse error or continue outside of loop error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // INTEGRATION TESTS
+    // ========================
+
+    #[test]
+    fn test_while_loop_compiles_end_to_end() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let x = 5\n    while x > 0:\n        x = x - 1\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        assert!(output.exists());
+
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("while_start"));
+        assert!(ir.contains("while_body"));
+        assert!(ir.contains("while_end"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_for_loop_compiles_end_to_end() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    for i = 3:\n        i\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        assert!(output.exists());
+
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("for_start"));
+        assert!(ir.contains("for_body"));
+        assert!(ir.contains("for_end"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_loop_with_break_and_continue_together() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let x = 10\n    while x > 0:\n        if x == 5:\n            break\n        x = x - 1\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        assert!(output.exists());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // PARSER ERROR TESTS
+    // ========================
+
+    #[test]
+    fn test_unclosed_paren_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    return (1 + 2\n").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("expected") || stderr.contains("RParen") || stderr.contains("Error:"),
+            "Expected parser error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_missing_function_body_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main()").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_invalid_assignment_target_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    1 + 2 = 3").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_invalid_token_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    return @\n").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_empty_function_name_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn ():\n    return 1").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // TYPE CHECKER ERROR TESTS
+    // ========================
+
+    #[test]
+    fn test_type_mismatch_in_assignment_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let x: i32 = \"hello\"\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("cannot assign") || stderr.contains("type"),
+            "Expected type mismatch error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_arithmetic_on_strings_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let t = s + \" world\"\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("cannot perform") || stderr.contains("arithmetic"),
+            "Expected arithmetic error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_invalid_if_condition_type_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    if \"test\":\n        return 1\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("condition") || stderr.contains("bool"),
+            "Expected condition type error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_invalid_while_condition_type_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    while \"test\":\n        return 0\n    return 1").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_comparison_type_mismatch_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let x = 1\n    let result = x < \"hello\"\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("cannot compare") || stderr.contains("type"),
+            "Expected comparison error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_unary_not_on_string_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let r = not s\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_unary_negate_on_string_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let r = -s\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // UNDEFINED VARIABLE TESTS
+    // ========================
+
+    #[test]
+    fn test_use_undefined_variable_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    return x").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("unknown") || stderr.contains("undefined") || stderr.contains("x"),
+            "Expected undefined variable error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_reassign_undefined_variable_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    x = 5\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // INVALID ITERABLE TESTS
+    // ========================
+
+    #[test]
+    fn test_for_loop_with_invalid_iterable_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    for i in 3.14:\n        i\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // COMPILER EDGE CASE TESTS
+    // ========================
+
+    #[test]
+    fn test_nested_if_else_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let x = 5\n    if x > 0:\n        if x > 3:\n            return 1\n        else:\n            return 2\n    else:\n        return 0\n    return -1",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("then") || ir.contains("merge"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_multiple_functions_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn add():\n    return 1 + 2\n\nfn sub():\n    return 5 - 3\n\nfn main():\n    return add()",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("@add"));
+        assert!(ir.contains("@sub"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_function_with_no_return_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn do_nothing():\n    let x = 1\n\nfn main():\n    do_nothing()\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_chained_comparison_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let a = 5\n    let b = 3\n    let c = 10\n    let result = a < b < c\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_fstring_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "import std\nfn main():\n    let name = \"Alice\"\n    let greeting = f\"Hello {name}\"\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("sprintf"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // CONST TESTS
+    // ========================
+
+    #[test]
+    fn test_const_immutable_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    const PI = 3.14\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_const_reassignment_fails_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    const PI = 3.14\n    PI = 3.0\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // IMPORT TESTS
+    // ========================
+
+    #[test]
+    fn test_import_nonexistent_module_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "import \"nonexistent_module.ron\"\nfn main():\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("import") || stderr.contains("module") || stderr.contains("file"),
+            "Expected import error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_call_undefined_function_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "import std\nfn main():\n    nonexistent_function()\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("unknown function") || stderr.contains("undefined"),
+            "Expected function error, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // BORROW CHECKER TESTS
+    // ========================
+
+    #[test]
+    fn test_borrow_mut_after_borrow_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let a = 1\n    let r = &a\n    let m = &mut a\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_borrow_after_move_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let s = \"hello\"\n    let t = s\n    let r = &s\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_borrow_conflict_in_scope_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let a = 1\n    let r1 = &a\n    let r2 = &mut a\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // FUNCTION CALL TESTS
+    // ========================
+
+    #[test]
+    fn test_function_call_with_args_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn add(a, b):\n    return a + b\n\nfn main():\n    return add(1, 2)",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("@add"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_recursive_function_codegen() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn count(n):\n    if n == 0:\n        return 0\n    return count(n - 1)\n\nfn main():\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("call i32 @count"));
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);

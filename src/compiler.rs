@@ -73,6 +73,8 @@ pub struct LLVMTextGen {
     runtime_helpers_emitted: bool,
 
     current_function: Option<String>,
+    loop_label_stack: Vec<(String, String)>,
+    flattened_funcs: Vec<FunctionDef>,
 }
 
 impl LLVMTextGen {
@@ -88,6 +90,8 @@ impl LLVMTextGen {
             stdlib_enabled: false,
             runtime_helpers_emitted: false,
             current_function: None,
+            loop_label_stack: Vec::new(),
+            flattened_funcs: Vec::new(),
         }
     }
 
@@ -95,6 +99,7 @@ impl LLVMTextGen {
         self.stdlib_enabled = false;
         self.function_aliases.clear();
         let program = self.flatten_program(program)?;
+        self.flattened_funcs = program.functions.clone();
         self.function_sigs = self.build_function_sigs(&program);
 
         BorrowChecker::new()
@@ -133,8 +138,16 @@ impl LLVMTextGen {
         for global in &program.globals {
             self.generate_expr(global, &[], &mut HashMap::new(), "void")?;
         }
+        // Emit extern function declarations first
         for func in &program.functions {
-            self.generate_function(func)?;
+            if func.body.is_empty() && func.param_types.iter().any(|t| t.is_some()) {
+                self.generate_extern_declaration(func)?;
+            }
+        }
+        for func in &program.functions {
+            if !func.body.is_empty() || func.param_types.iter().all(|t| t.is_none()) {
+                self.generate_function(func)?;
+            }
         }
 
         ir.push_str(&self.globals);
@@ -261,6 +274,19 @@ impl LLVMTextGen {
                     }
                 }
             }
+            Expr::While { condition, body } => {
+                self.collect_calls(condition, calls);
+                for stmt in &body.stmts {
+                    self.collect_calls(stmt, calls);
+                }
+            }
+            Expr::For { variable: _, iterable, body } => {
+                self.collect_calls(iterable, calls);
+                for stmt in &body.stmts {
+                    self.collect_calls(stmt, calls);
+                }
+            }
+            Expr::Break | Expr::Continue => {}
             Expr::FString(elements) => {
                 for el in elements {
                     self.collect_calls(el, calls);
@@ -433,6 +459,29 @@ impl LLVMTextGen {
                     .map(|el| self.rename_calls(el, alias_map, function_names))
                     .collect(),
             ),
+            Expr::While { condition, body } => Expr::While {
+                condition: Box::new(self.rename_calls(*condition, alias_map, function_names)),
+                body: Box::new(Block {
+                    stmts: body
+                        .stmts
+                        .into_iter()
+                        .map(|stmt| self.rename_calls(stmt, alias_map, function_names))
+                        .collect(),
+                }),
+            },
+            Expr::For { variable, iterable, body } => Expr::For {
+                variable,
+                iterable: Box::new(self.rename_calls(*iterable, alias_map, function_names)),
+                body: Box::new(Block {
+                    stmts: body
+                        .stmts
+                        .into_iter()
+                        .map(|stmt| self.rename_calls(stmt, alias_map, function_names))
+                        .collect(),
+                }),
+            },
+            Expr::Break => Expr::Break,
+            Expr::Continue => Expr::Continue,
             other => other,
         }
     }
@@ -462,15 +511,21 @@ impl LLVMTextGen {
     }
 
     fn build_function_sigs(&self, program: &Program) -> HashMap<String, &'static str> {
-        let mut sigs: HashMap<String, &'static str> = program
-            .functions
-            .iter()
-            .map(|func| (func.name.clone(), "void"))
-            .collect();
+        let mut sigs: HashMap<String, &'static str> = HashMap::new();
+        for func in &program.functions {
+            if let Some(ref ret) = func.return_type {
+                sigs.insert(func.name.clone(), Self::type_str_to_llvm_ret(ret));
+            } else {
+                sigs.insert(func.name.clone(), "void");
+            }
+        }
 
         for _ in 0..8 {
             let mut changed = false;
             for func in &program.functions {
+                if func.return_type.is_some() {
+                    continue;
+                }
                 let ty = self.infer_function_return_type(func, &sigs);
                 if sigs.get(&func.name).copied() != Some(ty) {
                     sigs.insert(func.name.clone(), ty);
@@ -485,16 +540,39 @@ impl LLVMTextGen {
         sigs
     }
 
+    fn type_str_to_llvm_ret(t: &str) -> &'static str {
+        match t {
+            "i32" => "i32",
+            "f64" | "double" | "float" => "double",
+            "str" | "string" | "ptr" => "i8*",
+            "void" => "void",
+            _ => "void",
+        }
+    }
+
     fn infer_function_return_type(
         &self,
         func: &FunctionDef,
         sigs: &HashMap<String, &'static str>,
     ) -> &'static str {
+        if let Some(ref ret) = func.return_type {
+            return Self::type_str_to_llvm_ret(ret);
+        }
         if func.name == "main" {
             return "i32";
         }
-
-        self.find_return_in_exprs(&func.body, sigs)
+        
+        let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
+        for (i, p) in func.params.iter().enumerate() {
+            let param_type = if let Some(Some(t)) = func.param_types.get(i) {
+                Self::type_str_to_type(t)
+            } else {
+                self.infer_param_type(&func.body, p, &func.params)
+            };
+            temp_locals.insert(p.clone(), (param_type, format!("arg{}", i), false));
+        }
+        
+        self.find_return_in_exprs(&func.body, &func.params, &temp_locals, sigs)
     }
 
     fn next_block_label(&mut self, prefix: &str) -> String {
@@ -511,10 +589,26 @@ impl LLVMTextGen {
             .params
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("i8* %arg{}", i))
+            .map(|(i, p)| {
+                let type_str = if let Some(Some(t)) = func.param_types.get(i) {
+                    Self::type_to_llvm_str(t)
+                } else {
+                    let param_type = self.infer_param_type(&func.body, p, &func.params);
+                    match param_type {
+                        Type::I32 => "i32",
+                        Type::F64 => "double",
+                        Type::Ptr => "i8*",
+                    }
+                };
+                format!("{} %arg{}", type_str, i)
+            })
             .collect();
 
-        let return_type = self.infer_return_type(&func.body);
+        let return_type = if let Some(ref t) = func.return_type {
+            Self::type_to_llvm_str(t)
+        } else {
+            self.infer_return_type(&func.body, &func.params)
+        };
 
         writeln!(
             &mut self.functions,
@@ -528,6 +622,14 @@ impl LLVMTextGen {
         writeln!(&mut self.functions, "entry:").unwrap();
 
         let mut locals: HashMap<String, (Type, String, bool)> = HashMap::new();
+        for (i, param) in func.params.iter().enumerate() {
+            let param_type = if let Some(Some(t)) = func.param_types.get(i) {
+                Self::type_str_to_type(t)
+            } else {
+                self.infer_param_type(&func.body, param, &func.params)
+            };
+            locals.insert(param.clone(), (param_type, format!("arg{}", i), false));
+        }
         let mut has_return = false;
 
         for expr in &func.body {
@@ -544,6 +646,56 @@ impl LLVMTextGen {
         writeln!(&mut self.functions, "}}\n").unwrap();
         self.current_function = None;
         Ok(())
+    }
+
+    fn generate_extern_declaration(&mut self, func: &FunctionDef) -> CompileResult<()> {
+        let args: Vec<String> = func
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                if let Some(Some(t)) = func.param_types.get(i) {
+                    Self::type_to_llvm_str(t).to_string()
+                } else {
+                    "i32".to_string()
+                }
+            })
+            .collect();
+
+        let return_type = if let Some(ref t) = func.return_type {
+            Self::type_to_llvm_str(t)
+        } else {
+            "void"
+        };
+
+writeln!(
+            &mut self.functions,
+            "declare {} @{}({})",
+            return_type,
+            func.name,
+            args.join(", ")
+        )
+        .unwrap();
+        Ok(())
+    }
+
+    fn type_to_llvm_str(t: &str) -> &'static str {
+        match t {
+            "i32" => "i32",
+            "f64" | "double" | "float" => "double",
+            "str" | "string" | "ptr" => "i8*",
+            "void" => "void",
+            _ => "i32",
+        }
+    }
+
+    fn type_str_to_type(t: &str) -> Type {
+        match t {
+            "i32" => Type::I32,
+            "f64" | "double" | "float" => Type::F64,
+            "str" | "string" | "ptr" => Type::Ptr,
+            _ => Type::I32,
+        }
     }
 
     pub fn infer_expr_type(
@@ -567,8 +719,16 @@ impl LLVMTextGen {
                         Type::F64 => "double",
                         Type::Ptr => "i8*",
                     }
-                } else if params.iter().any(|p| p == name) {
-                    "i8*"
+                } else if params.contains(&name) {
+                    if let Some((typ, _, _)) = locals.get(name) {
+                        match typ {
+                            Type::I32 => "i32",
+                            Type::F64 => "double",
+                            Type::Ptr => "i8*",
+                        }
+                    } else {
+                        "void"
+                    }
                 } else if self.global_vars.contains_key(name) {
                     "i8*"
                 } else {
@@ -610,6 +770,8 @@ impl LLVMTextGen {
                     "double"
                 } else if lt == "void" || rt == "void" {
                     "i32"
+                } else if lt == "i8*" && rt == "i8*" {
+                    "i8*"
                 } else {
                     "i32"
                 }
@@ -634,9 +796,9 @@ impl LLVMTextGen {
                 }
             }
             Expr::If { then_branch, else_branch, .. } => {
-                let then_type = self.find_return_in_exprs(&then_branch.stmts, &self.function_sigs);
+                let then_type = self.find_return_in_exprs(&then_branch.stmts, params, locals, &self.function_sigs);
                 if let Some(else_block) = else_branch {
-                    let else_type = self.find_return_in_exprs(&else_block.stmts, &self.function_sigs);
+                    let else_type = self.find_return_in_exprs(&else_block.stmts, params, locals, &self.function_sigs);
                     if then_type != "void" && else_type != "void" && then_type == else_type {
                         then_type
                     } else {
@@ -650,31 +812,38 @@ impl LLVMTextGen {
         }
     }
 
-    fn infer_return_type(&self, body: &[Expr]) -> &'static str {
+    fn infer_return_type(&self, body: &[Expr], params: &[String]) -> &'static str {
         if let Some(name) = &self.current_function {
             if name == "main" {
                 return "i32";
             }
         }
-        self.find_return_in_exprs(body, &self.function_sigs)
+        let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
+        for (i, p) in params.iter().enumerate() {
+            let param_type = self.infer_param_type(body, p, params);
+            temp_locals.insert(p.clone(), (param_type, format!("arg{}", i), false));
+        }
+        self.find_return_in_exprs(body, params, &temp_locals, &self.function_sigs)
     }
 
     fn find_return_in_exprs(
         &self,
         exprs: &[Expr],
+        params: &[String],
+        temp_locals: &HashMap<String, (Type, String, bool)>,
         sigs: &HashMap<String, &'static str>,
     ) -> &'static str {
         for expr in exprs {
             if let Expr::Return(inner) = expr {
-                return self.infer_expr_type_with_sigs(inner, &[], &HashMap::new(), sigs);
+                return self.infer_expr_type_with_sigs(inner, params, temp_locals, sigs);
             }
             if let Expr::If { then_branch, else_branch, .. } = expr {
-                let then_type = self.find_return_in_exprs(&then_branch.stmts, sigs);
+                let then_type = self.find_return_in_exprs(&then_branch.stmts, params, temp_locals, sigs);
                 if then_type != "void" {
                     return then_type;
                 }
                 if let Some(else_block) = else_branch {
-                    let else_type = self.find_return_in_exprs(&else_block.stmts, sigs);
+                    let else_type = self.find_return_in_exprs(&else_block.stmts, params, temp_locals, sigs);
                     if else_type != "void" {
                         return else_type;
                     }
@@ -778,6 +947,50 @@ impl LLVMTextGen {
         }
     }
 
+    fn get_function_param_types(&self, func: &str) -> Vec<&'static str> {
+        // First check for builtin runtime functions
+        let builtin_types = match func {
+            "__rt_strlen" => vec!["i8*"],
+            "__rt_print_str" => vec!["i8*"],
+            "__rt_print_int" => vec!["i32"],
+            "__rt_print_float" => vec!["double"],
+            "__rt_exit" => vec!["i32"],
+            "__rt_read_file" => vec!["i8*"],
+            "__rt_write_file" => vec!["i8*", "i8*"],
+            _ => vec![],
+        };
+        if !builtin_types.is_empty() {
+            return builtin_types;
+        }
+
+        let mut types = Vec::new();
+        let resolved = self.resolve_function_name(func);
+        for func_def in &self.flattened_funcs {
+            if func_def.name == resolved {
+                for (i, param) in func_def.params.iter().enumerate() {
+                    let param_type = if let Some(Some(t)) = func_def.param_types.get(i) {
+                        match t.as_str() {
+                            "i32" => "i32",
+                            "f64" | "double" | "float" => "double",
+                            "str" | "string" | "ptr" => "i8*",
+                            _ => "i32",
+                        }
+                    } else {
+                        let inferred = self.infer_param_type(&func_def.body, param, &func_def.params);
+                        match inferred {
+                            Type::I32 => "i32",
+                            Type::F64 => "double",
+                            Type::Ptr => "i8*",
+                        }
+                    };
+                    types.push(param_type);
+                }
+                return types;
+            }
+        }
+        types
+    }
+
     fn infer_expr_type_with_sigs(
         &self,
         expr: &Expr,
@@ -815,9 +1028,152 @@ impl LLVMTextGen {
                 } else {
                     self.functions.push_str("  ret void\n");
                 }
-            },
+            }
             _ => unreachable!(),
         }
+    }
+
+fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) -> Type {
+        let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
+        
+        // First: process all params BEFORE the one we're inferring
+        for (i, p) in known_params.iter().enumerate() {
+            if p == param {
+                break;
+            }
+            for e in body {
+                if let Expr::Let { name, typ, value, is_const: _ } = e {
+                    if name == p {
+                        let inferred = self.infer_expr_type(value, known_params, &temp_locals);
+                        let t = match inferred {
+                            "i32" => Type::I32,
+                            "double" => Type::F64,
+                            _ => Type::Ptr,
+                        };
+                        temp_locals.insert(p.to_string(), (t, format!("arg{}", i), false));
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Second: look for let binding of the CURRENT param
+        for expr in body {
+            if let Expr::Let { name, typ, value, is_const: _ } = expr {
+                if name == param {
+                    if let Some(t) = typ {
+                        match t.as_str() {
+                            "i32" => return Type::I32,
+                            "f64" | "float" => return Type::F64,
+                            "str" | "string" | "ptr" => return Type::Ptr,
+                            _ => {}
+                        }
+                    }
+                    let inferred = self.infer_expr_type(value, known_params, &temp_locals);
+                    return match inferred {
+                        "i32" => Type::I32,
+                        "double" => Type::F64,
+                        _ => Type::Ptr,
+                    };
+                }
+            }
+        }
+        
+        // Third: check if param is used in string context (passed to string functions)
+        // This includes direct __rt_* calls AND calls to wrapper functions like print/len/etc
+        let is_used_in_string_context = |body: &[Expr], target_param: &str, stdlib_enabled: bool| -> bool {
+            fn check_expr(expr: &Expr, param: &str, stdlib_enabled: bool, visited: &mut Vec<String>) -> bool {
+                match expr {
+                    Expr::Call { func, args } => {
+                        // Check if param is passed as an argument
+                        for arg in args {
+                            if let Expr::Identifier(n) = arg {
+                                if n == param {
+                                    // This param is being passed to a function
+                                    // Check if it's a direct string function call
+                                    if func.starts_with("__rt_") && func != "__rt_exit" && func != "__rt_print_int" && func != "__rt_print_float" {
+                                        return true;
+                                    }
+                                    // Check if it's a stdlib wrapper function that uses string context
+                                    if stdlib_enabled && matches!(func.as_str(), "print" | "len" | "read_file" | "write_file" | "is_empty") {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                        // Avoid infinite loops for recursive functions
+                        if !visited.contains(func) {
+                            visited.push(func.to_string());
+                            // Recursively check nested function bodies for stdlib functions
+                            // This handles print(value) -> __rt_print_str(value) patterns
+                        }
+                        false
+                    }
+                    Expr::Return(inner) => check_expr(inner, param, stdlib_enabled, visited),
+                    _ => false
+                }
+            }
+            
+            let mut visited = Vec::new();
+            for expr in body {
+                if check_expr(expr, target_param, stdlib_enabled, &mut visited) {
+                    return true;
+                }
+            }
+            false
+        };
+        
+        if is_used_in_string_context(body, param, self.stdlib_enabled) {
+            return Type::Ptr;
+        }
+        
+        // Fourth: check if param is used in binary expressions (comparison/arithmetic) anywhere
+        fn param_in_binary(expr: &Expr, param: &str) -> bool {
+            match expr {
+                Expr::Binary(l, _, r) => {
+                    if let Expr::Identifier(n) = l.as_ref() { if n == param { return true; } }
+                    if let Expr::Identifier(n) = r.as_ref() { if n == param { return true; } }
+                    param_in_binary(l, param) || param_in_binary(r, param)
+                }
+                Expr::If { condition, then_branch, else_branch } => {
+                    param_in_binary(condition, param)
+                        || then_branch.stmts.iter().any(|e| param_in_binary(e, param))
+                        || else_branch.as_ref().is_some_and(|b| b.stmts.iter().any(|e| param_in_binary(e, param)))
+                }
+                Expr::While { condition, body } => {
+                    param_in_binary(condition, param)
+                        || body.stmts.iter().any(|e| param_in_binary(e, param))
+                }
+                Expr::For { iterable, body, .. } => {
+                    param_in_binary(iterable, param)
+                        || body.stmts.iter().any(|e| param_in_binary(e, param))
+                }
+                Expr::Call { args, .. } => args.iter().any(|a| param_in_binary(a, param)),
+                Expr::Return(inner) => param_in_binary(inner, param),
+                Expr::Unary(_, inner) => param_in_binary(inner, param),
+                _ => false,
+            }
+        }
+        if body.iter().any(|e| param_in_binary(e, param)) {
+            return Type::I32;
+        }
+        
+        // Default: params are string pointer (ptr) by default
+        Type::Ptr
+    }
+
+    fn generate_block_with_terminator(
+        &mut self,
+        stmts: &[Expr],
+        params: &[String],
+        locals: &mut HashMap<String, (Type, String, bool)>,
+        return_ty: &str,
+    ) -> CompileResult<bool> {
+        let last_is_return = stmts.iter().last().map_or(false, |s| matches!(s, Expr::Return(_)));
+        for stmt in stmts {
+            self.generate_expr(stmt, params, locals, return_ty)?;
+        }
+        Ok(last_is_return)
     }
 
     fn generate_expr(
@@ -975,15 +1331,22 @@ impl LLVMTextGen {
                 self.emit_asm_call(args, params, locals)?;
             }
 
-            Expr::Return(inner) => {
+Expr::Return(inner) => {
                 let ty = self.infer_expr_type(inner, params, locals);
-                if ty == "i32" && (return_ty == "i32" || return_ty == "void") {
+                if ty == "i32" && return_ty == "i32" {
                     let val = self.generate_int_expr(inner, params, locals)?;
                     writeln!(&mut self.functions, "  ret i32 {}", val.as_str()).unwrap();
-                } else if ty == "i8*" && (return_ty == "i8*" || return_ty == "void") {
+                } else if ty == "i8*" && return_ty == "i8*" {
                     let ptr = self.next_temp();
                     self.generate_ptr_expr(inner, params, locals, &ptr)?;
                     writeln!(&mut self.functions, "  ret i8* %{}", ptr).unwrap();
+                } else if ty == "i32" && return_ty == "void" {
+                    writeln!(&mut self.functions, "  ret void").unwrap();
+                } else if ty == "void" && return_ty == "void" {
+                    writeln!(&mut self.functions, "  ret void").unwrap();
+                } else if ty == "void" && return_ty == "i32" {
+                    let val = self.generate_int_expr(inner, params, locals)?;
+                    writeln!(&mut self.functions, "  ret i32 {}", val.as_str()).unwrap();
                 } else {
                     return Err(CompileError::new("return: types mismatch"));
                 }
@@ -1011,36 +1374,166 @@ impl LLVMTextGen {
                 .unwrap();
 
                 let then_label = self.next_block_label("then");
-                let else_label = if else_branch.is_some() {
-                    self.next_block_label("else")
-                } else {
-                    self.next_block_label("merge")
-                };
                 let merge_label = self.next_block_label("merge");
 
-                writeln!(
-                    &mut self.functions,
-                    "  br i1 %{}, label %{}, label %{}",
-                    cond_bool, then_label, else_label
-                )
-                .unwrap();
-
-                writeln!(&mut self.functions, "{}:", then_label).unwrap();
-                for stmt in &then_branch.stmts {
-                    self.generate_expr(stmt, params, locals, return_ty)?;
-                }
-
-                writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
-
                 if let Some(else_block) = else_branch {
-                    writeln!(&mut self.functions, "{}:", else_label).unwrap();
-                    for stmt in &else_block.stmts {
-                        self.generate_expr(stmt, params, locals, return_ty)?;
+                    let else_l = self.next_block_label("else");
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, else_l
+                    )
+                    .unwrap();
+
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let then_ended_with_return = self.generate_block_with_terminator(&then_branch.stmts, params, locals, return_ty)?;
+                    if !then_ended_with_return {
+                        writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
                     }
-                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+
+                    writeln!(&mut self.functions, "{}:", else_l).unwrap();
+                    let else_ended_with_return = self.generate_block_with_terminator(&else_block.stmts, params, locals, return_ty)?;
+                    if !else_ended_with_return {
+                        writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                    }
+                } else {
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, merge_label
+                    )
+                    .unwrap();
+
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let then_ended_with_return = self.generate_block_with_terminator(&then_branch.stmts, params, locals, return_ty)?;
+                    if !then_ended_with_return {
+                        writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                    }
                 }
 
                 writeln!(&mut self.functions, "{}:", merge_label).unwrap();
+            }
+
+            Expr::While { condition, body } => {
+                let loop_start = self.next_block_label("while_start");
+                let loop_body = self.next_block_label("while_body");
+                let loop_end = self.next_block_label("while_end");
+
+                self.loop_label_stack.push((loop_start.clone(), loop_end.clone()));
+
+                writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
+                writeln!(&mut self.functions, "{}:", loop_start).unwrap();
+
+                let cond_val = self.generate_int_expr(condition, params, locals)?;
+                let cond_bool = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp ne i32 {}, 0",
+                    cond_bool,
+                    cond_val.as_str()
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  br i1 %{}, label %{}, label %{}",
+                    cond_bool, loop_body, loop_end
+                )
+                .unwrap();
+
+                writeln!(&mut self.functions, "{}:", loop_body).unwrap();
+                for stmt in &body.stmts {
+                    self.generate_expr(stmt, params, locals, return_ty)?;
+                }
+                writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
+
+                writeln!(&mut self.functions, "{}:", loop_end).unwrap();
+                self.loop_label_stack.pop();
+            }
+
+            Expr::For { variable, iterable, body } => {
+                let iter_val = self.generate_int_expr(iterable, params, locals)?;
+                let loop_start = self.next_block_label("for_start");
+                let loop_body = self.next_block_label("for_body");
+                let loop_end = self.next_block_label("for_end");
+
+                let counter_alloca = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = alloca i32", counter_alloca).unwrap();
+                writeln!(&mut self.functions, "  store i32 {}, i32* %{}", iter_val.as_str(), counter_alloca).unwrap();
+
+                let mut locals_for = locals.clone();
+                locals_for.insert(variable.clone(), (Type::I32, counter_alloca.clone(), false));
+
+                self.loop_label_stack.push((loop_start.clone(), loop_end.clone()));
+
+                writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
+                writeln!(&mut self.functions, "{}:", loop_start).unwrap();
+
+                let counter_val = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    counter_val, counter_alloca
+                )
+                .unwrap();
+
+                let loop_cond = self.next_temp();
+                let cv = format!("%{}", counter_val);
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp sgt i32 {}, 0",
+                    loop_cond, cv
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  br i1 %{}, label %{}, label %{}",
+                    loop_cond, loop_body, loop_end
+                )
+                .unwrap();
+
+                writeln!(&mut self.functions, "{}:", loop_body).unwrap();
+                for stmt in &body.stmts {
+                    self.generate_expr(stmt, params, &mut locals_for, return_ty)?;
+                }
+
+                let new_counter = self.next_temp();
+                let cv = format!("%{}", counter_val);
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = sub i32 {}, 1",
+                    new_counter, cv
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 %{}, i32* %{}",
+                    new_counter, counter_alloca
+                )
+                .unwrap();
+
+                if return_ty != "void" && return_ty != "i32" {
+                } else {
+                    writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
+                }
+
+                writeln!(&mut self.functions, "{}:", loop_end).unwrap();
+                self.loop_label_stack.pop();
+            }
+
+            Expr::Break => {
+                if let Some((_, loop_end)) = self.loop_label_stack.last() {
+                    writeln!(&mut self.functions, "  br label %{}", loop_end).unwrap();
+                } else {
+                    return Err(CompileError::new("break outside of loop"));
+                }
+            }
+
+            Expr::Continue => {
+                if let Some((loop_start, _)) = self.loop_label_stack.last() {
+                    writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
+                } else {
+                    return Err(CompileError::new("continue outside of loop"));
+                }
             }
 
             Expr::Literal(Literal::Int(_))
@@ -1135,7 +1628,7 @@ impl LLVMTextGen {
                                 let loaded = self.next_temp();
                                 writeln!(
                                     &mut self.functions,
-                                    "  %{} = load i32, i32* %{}",
+                    "  %{} = load i32, i32* %{}",
                                     loaded, alloca
                                 )
                                 .unwrap();
@@ -1184,9 +1677,14 @@ impl LLVMTextGen {
         let fmt_ptr = self.next_temp();
         self.emit_gep(&fmt_id, fmt_str.len() + 1, &fmt_ptr);
 
-        let buf_ptr =
-            "getelementptr inbounds ([1024 x i8], [1024 x i8]* @.global_buffer, i32 0, i32 0)";
-        let mut sprintf_args = format!("i8* {}, i8* %{}", buf_ptr, fmt_ptr);
+        let buf_ptr = self.next_temp();
+        writeln!(
+            &mut self.functions,
+            "  %{} = getelementptr inbounds [1024 x i8], [1024 x i8]* @.global_buffer, i32 0, i32 0",
+            buf_ptr
+        )
+        .unwrap();
+        let mut sprintf_args = format!("i8* %{}, i8* %{}", buf_ptr, fmt_ptr);
         for arg in args {
             write!(&mut sprintf_args, ", {}", arg).unwrap();
         }
@@ -1197,7 +1695,7 @@ impl LLVMTextGen {
             sprintf_args
         )
         .unwrap();
-        writeln!(&mut self.functions, "  %{} = {}", result_ptr, buf_ptr).unwrap();
+        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result_ptr, buf_ptr).unwrap();
         Ok(())
     }
 
@@ -1214,7 +1712,7 @@ impl LLVMTextGen {
             Expr::Call { func, args } => {
                 let ret_ty = self
                     .builtin_return_type(func)
-                    .or_else(|| self.function_sigs.get(func).copied())
+                    .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
                     .unwrap_or("void");
                 if ret_ty != "i32" {
                     return Err(CompileError::new(format!("{} does not return i32", func)));
@@ -1226,12 +1724,55 @@ impl LLVMTextGen {
             }
             Expr::Identifier(name) => {
                 if let Some((typ, alloca, _)) = locals.get(name) {
+                    // Check if it's a function parameter (identified by "arg" prefix)
+                    if alloca.starts_with("arg") {
+                        let idx: usize = alloca.trim_start_matches("arg").parse().unwrap_or(0);
+                        return match typ {
+                            Type::I32 => {
+                                let res = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = load i32, i32* %arg{}",
+                                    res, idx
+                                )
+                                .unwrap();
+                                Ok(Val::Reg(res))
+                            }
+                            Type::F64 => {
+                                let res = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = load double, double* %arg{}",
+                                    res, idx
+                                )
+                                .unwrap();
+                                let converted = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = fptosi double %{} to i32",
+                                    converted, res
+                                )
+                                .unwrap();
+                                Ok(Val::Reg(converted))
+                            }
+                            Type::Ptr => {
+                                let res = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = load i8*, i8** %arg{}",
+                                    res, idx
+                                )
+                                .unwrap();
+                                Ok(Val::Reg(res))
+                            }
+                        };
+                    }
                     return match typ {
                         Type::I32 => {
                             let res = self.next_temp();
                             writeln!(
                                 &mut self.functions,
-                                "  %{} = load i32, i32* %{}",
+                                    "  %{} = load i32, i32* %{}",
                                 res, alloca
                             )
                             .unwrap();
@@ -1254,18 +1795,17 @@ impl LLVMTextGen {
                             .unwrap();
                             Ok(Val::Reg(converted))
                         }
-                        Type::Ptr => Err(CompileError::new(format!(
-                            "variable '{}' has a string type, but is used in a numeric context.",
-                            name
-                        ))),
+                        Type::Ptr => {
+                            let res = self.next_temp();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = load i8*, i8** %{}",
+                                res, alloca
+                            )
+                            .unwrap();
+                            Ok(Val::Reg(res))
+                        }
                     };
-                }
-
-                if params.iter().position(|p| p == name).is_some() {
-                    return Err(CompileError::new(format!(
-                        "The function parameter '{}' has a string type (i8*), but is used in a numeric context",
-                        name
-                    )));
                 }
 
                 if self.global_vars.contains_key(name) {
@@ -1291,7 +1831,7 @@ impl LLVMTextGen {
                         Val::ImmFloat(_) => Err(CompileError::new("cannot use + on float in integer context")),
                         Val::Reg(r) => {
                             let res = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = add i32 0, {}", res, r).unwrap();
+                            writeln!(&mut self.functions, "  %{} = add i32 0, {}", res, r.as_str()).unwrap();
                             Ok(Val::Reg(res))
                         }
                     },
@@ -1300,7 +1840,7 @@ impl LLVMTextGen {
                         Val::ImmFloat(_) => Err(CompileError::new("cannot use - on float in integer context")),
                         Val::Reg(r) => {
                             let res = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = sub i32 0, {}", res, r).unwrap();
+                            writeln!(&mut self.functions, "  %{} = sub i32 0, {}", res, r.as_str()).unwrap();
                             Ok(Val::Reg(res))
                         }
                     },
@@ -1311,8 +1851,9 @@ impl LLVMTextGen {
                             let cmp = self.next_temp();
                             writeln!(
                                 &mut self.functions,
-                                "  %{} = icmp eq i32 {}, 0",
-                                cmp, r
+                                "  %{} = icmp eq i32 %{}, 0",
+                                cmp,
+                                r
                             )
                             .unwrap();
                             let zext = self.next_temp();
@@ -1435,7 +1976,7 @@ impl LLVMTextGen {
             Expr::Call { func, args } => {
                 let ret_ty = self
                     .builtin_return_type(func)
-                    .or_else(|| self.function_sigs.get(func).copied())
+                    .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
                     .unwrap_or("void");
                 if ret_ty != "double" {
                     return Err(CompileError::new(format!("{} does not return double", func)));
@@ -1572,7 +2113,7 @@ impl LLVMTextGen {
     }
 
     fn next_temp(&mut self) -> String {
-        let id = format!(".t{}", self.string_count);
+        let id = format!("v{}", self.string_count);
         self.string_count += 1;
         id
     }
@@ -1625,12 +2166,22 @@ impl LLVMTextGen {
             }
             Expr::Identifier(name) => {
                 if let Some((Type::Ptr, alloca, _)) = locals.get(name) {
-                    writeln!(
-                        &mut self.functions,
-                        "  %{} = load i8*, i8** %{}",
-                        result, alloca
-                    )
-                    .unwrap();
+                    if alloca.starts_with("arg") {
+                        let idx: usize = alloca.trim_start_matches("arg").parse().unwrap_or(0);
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %arg{} to i8*",
+                            result, idx
+                        )
+                        .unwrap();
+                    } else {
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load i8*, i8** %{}",
+                            result, alloca
+                        )
+                        .unwrap();
+                    }
                 } else if let Some(idx) = params.iter().position(|p| p == name) {
                     writeln!(
                         &mut self.functions,
@@ -1677,7 +2228,7 @@ impl LLVMTextGen {
             Expr::Call { func, args } => {
                 let ty = self
                     .builtin_return_type(func)
-                    .or_else(|| self.function_sigs.get(func).copied())
+                    .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
                     .unwrap_or("void");
                 if ty != "i8*" {
                     return Err(CompileError::new(format!(
@@ -1791,10 +2342,11 @@ impl LLVMTextGen {
                 CompileError::new(format!("unknown function: {}{}", func, suggestion))
             })?;
 
+        let param_types = self.get_function_param_types(func);
         let mut call_args = Vec::new();
-        for arg in args {
-            let arg_ty = self.infer_expr_type(arg, params, locals);
-            match arg_ty {
+        for (i, arg) in args.iter().enumerate() {
+            let expected_type = param_types.get(i).copied().unwrap_or("i32");
+            match expected_type {
                 "i32" => {
                     let val = self.generate_int_expr(arg, params, locals)?;
                     call_args.push(format!("i32 {}", val.as_str()));
@@ -1808,7 +2360,7 @@ impl LLVMTextGen {
                     self.generate_ptr_expr(arg, params, locals, &ptr)?;
                     call_args.push(format!("i8* %{}", ptr));
                 }
-                _ => return Err(CompileError::new(format!("unsupported argument type in call: {}", arg_ty))),
+                _ => return Err(CompileError::new(format!("unsupported argument type in call: {}", expected_type))),
             }
         }
 

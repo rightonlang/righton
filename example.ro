@@ -1,5 +1,494 @@
 import std
 
+// ---
+// RIGHTON LANGUAGE DEMONSTRATION
+// ---
+// This file demonstrates all features of the Righton language
+
+// 1. BASIC DATA TYPES
+fn basics():
+    print("=[ 1. BASIC DATA TYPES ]=")
+    
+    // Integer literals
+    let x = 42
+    print("Integer:")
+    print(x)
+    
+    // Float literals
+    let f = 3.14
+    print("Float:")
+    print(f)
+    
+    // String literals
+    let s = "hello"
+    print("String:")
+    print(s)
+    
+    // Boolean literals
+    let b = true
+    print("Boolean (true):")
+    print(b)
+    
+    b = false
+    print("Boolean (false):")
+    print(b)
+    
+    return 0
+
+// 2. VARIABLES (mutable let, immutable const)
+fn variables():
+    print("=[ 2. VARIABLES ]=")
+    
+    // Mutable variables
+    let count = 10
+    print("Initial mutable:")
+    print(count)
+    
+    count = 20
+    print("After modification:")
+    print(count)
+    
+    // Immutable constants
+    const PI = 3.14159
+    print("Constant PI:")
+    print(PI)
+    
+    return 0
+
+// 3. ARITHMETIC OPERATIONS
+fn arithmetic():
+    print("=[ 3. ARITHMETIC ]=")
+    
+    let a = 10
+    let b = 3
+    
+    print("a = 10, b = 3")
+    print("Addition:")
+    print(a + b)
+    
+    print("Subtraction:")
+    print(a - b)
+    
+    print("Multiplication:")
+    print(a * b)
+    
+    print("Division:")
+    print(a / b)
+    
+    print("Modulo:")
+    print(a % b)
+    
+    print("Power:")
+    print(a ** 2)
+    
+    return 0
+
+// 4. COMPARISON OPERATORS
+fn comparisons():
+    print("=[ 4. COMPARISON OPERATORS ]=")
+    
+    let a = 10
+    let b = 5
+    
+    print("a = 10, b = 5")
+    print("a == b:")
+    print(a == b)
+    
+    print("a != b:")
+    print(a != b)
+    
+    print("a < b:")
+    print(a < b)
+    
+    print("a > b:")
+    print(a > b)
+    
+    print("a <= b:")
+    print(a <= b)
+    
+    print("a >= b:")
+    print(a >= b)
+    
+    return 0
+
+// 5. LOGICAL OPERATORS
+fn logic():
+    print("=[ 5. LOGICAL OPERATORS ]=")
+    
+    let p = true
+    let q = false
+    
+    print("p = true, q = false")
+    print("p:")
+    print(p)
+    
+    print("q:")
+    print(q)
+    
+    print("p and q:")
+    print(p and q)
+    
+    print("p or q:")
+    print(p or q)
+    
+    print("not p:")
+    print(not p)
+    
+    return 0
+
+// 6. CONDITIONAL STATEMENTS
+fn conditionals():
+    print("=[ 6. CONDITIONALS ]=")
+    
+    let x = 10
+    
+    print("x = 10")
+    print("Testing if x > 5:")
+    if x > 5:
+        print("x is greater than 5")
+    else:
+        print("x is not greater than 5")
+    
+    print("Testing even/odd:")
+    if x % 2 == 0:
+        print("x is even")
+    else:
+        print("x is odd")
+    
+    print("Nested conditionals:")
+    let y = 15
+    if y > 10:
+        if y > 20:
+            print("y > 20")
+        else:
+            print("10 < y <= 20")
+    else:
+        print("y <= 10")
+    
+    return 0
+
+// 7. WHILE LOOPS
+fn while_loop():
+    print("=[ 7. WHILE LOOP ]=")
+    
+    let n = 3
+    print("Countdown from 3:")
+    while n > 0:
+        print(n)
+        n = n - 1
+    print("Done!")
+    
+    return 0
+
+// 8. FOR LOOPS
+fn for_loop():
+    print("=[ 8. FOR LOOP ]=")
+    
+    print("Iterate 5 times:")
+    for i = 5:
+        print(i)
+    
+    return 0
+
+// 9. NESTED LOOPS
+fn nested_loops():
+    print("=[ 9. NESTED LOOPS ]=")
+    
+    print("2x2 multiplication table:")
+    for i = 2:
+        for j = 2:
+            let product = i * j
+            print(f"i={i} j={j} product={product}")
+    
+    return 0
+
+// 10. LOOP CONTROL (break, continue)
+fn loop_control():
+    print("=[ 10. LOOP CONTROL ]=")
+    
+    print("Break at 3:")
+    for i = 5:
+        if i == 3:
+            break
+        print(i)
+    
+    print("Skip 2:")
+    for i = 4:
+        if i == 2:
+            continue
+        print(i)
+    
+    return 0
+
+// Helper functions for demonstration
+fn get_five():
+    return 5
+
+fn get_three():
+    return 3
+
+fn get_pi():
+    return 3
+
+fn get_value():
+    return 42
+
+// 11. FUNCTIONS
+fn functions():
+    print("=[ 11. FUNCTIONS ]=")
+    
+    // Using helper functions
+    let a = get_five()
+    let b = get_three()
+    let sum = a + b
+    
+    print("Using helper functions:")
+    print("a = get_five() =")
+    print(a)
+    print("b = get_three() =")
+    print(b)
+    print("sum = a + b =")
+    print(sum)
+    
+    print("Function returning constant:")
+    print(get_value())
+    
+    print("Function returning PI:")
+    let pi = get_pi()
+    print(pi)
+    
+    return 0
+
+// 12. F-STRINGS
+fn fstrings():
+    print("=[ 12. F-STRINGS ]=")
+    
+    let name = "Alice"
+    let age = 30
+    let score = 95
+    
+    print("Simple f-string:")
+    print(f"Hello {name}")
+    
+    print("F-string with integer:")
+    print(f"Name: {name}, Age: {age}")
+    
+    print("F-string with multiple values:")
+    print(f"Student: {name}, Score: {score}")
+    
+    return 0
+
+// 13. STRING OPERATIONS
+fn strings():
+    print("=[ 13. STRINGS ]=")
+    
+    let s = "hello world"
+    print("String:")
+    print(s)
+    
+    print("String length:")
+    let l = len(s)
+    print(l)
+    
+    return 0
+
+// 14. MULTILINE STRINGS
+fn multiline_strings():
+    print("=[ 14. MULTILINE STRINGS ]=")
+    
+    let poem = """Roses are red,
+violets are blue,
+sugar is sweet,
+and so are you."""
+    
+    print("Poem:")
+    print(poem)
+    
+    return 0
+
+// 15. STANDARD LIBRARY
+fn stdlib():
+    print("=[ 15. STANDARD LIBRARY ]=")
+    
+    // Length function
+    let msg = "Hello"
+    let length = len(msg)
+    print("String length:")
+    print(length)
+    
+    // Exit function (commented to allow rest to run)
+    // exit(0)
+    
+    return 0
+
+// 16. TYPE INFERENCE
+fn type_inference():
+    print("=[ 16. TYPE INFERENCE ]=")
+    
+    // Inferred as integer
+    let x = 42
+    print("Integer (inferred):")
+    print(x)
+    
+    // Inferred as float
+    let y = 3.14
+    print("Float (inferred):")
+    print(y)
+    
+    // Inferred as string
+    let z = "text"
+    print("String (inferred):")
+    print(z)
+    
+    // Inferred as boolean
+    let b = true
+    print("Boolean (inferred):")
+    print(b)
+    
+    return 0
+
+// 17. EXPRESSIONS IN CONDITIONS
+fn expression_conditions():
+    print("=[ 17. EXPRESSIONS IN CONDITIONS ]=")
+    
+    let a = 10
+    let b = 5
+    
+    print("Using expressions in conditions:")
+    if a + b > 12:
+        print("a + b > 12")
+    
+    if a * 2 == b + 15:
+        print("a * 2 == b + 15")
+    
+    return 0
+
+// 18. ASSIGNMENT EXPRESSIONS
+fn assignments():
+    print("=[ 18. ASSIGNMENT EXPRESSIONS ]=")
+    
+    let x = 10
+    print("Initial x:")
+    print(x)
+    
+    x = x + 5
+    print("After x = x + 5:")
+    print(x)
+    
+    x = x * 2
+    print("After x = x * 2:")
+    print(x)
+    
+    return 0
+
+// 19. CHAINED COMPARISONS (via logical operators)
+fn chained_comparisons():
+    print("=[ 19. CHAINED COMPARISONS ]=")
+    
+    let x = 5
+    
+    print("Testing 0 < x < 10:")
+    if x > 0 and x < 10:
+        print("x is between 0 and 10")
+    else:
+        print("x is not between 0 and 10")
+    
+    return 0
+
+// 20. COMPLEX EXPRESSIONS
+fn complex_expressions():
+    print("=[ 20. COMPLEX EXPRESSIONS ]=")
+    
+    let a = 2
+    let b = 3
+    let c = 4
+    
+    // Complex arithmetic
+    let result = (a + b) * c
+    print("(a + b) * c:")
+    print(result)
+    
+    // Power
+    let power = a ** b
+    print("a ** b:")
+    print(power)
+    
+    // Modulo
+    let mod_result = 8 % 5
+    print("8 % 5:")
+    print(mod_result)
+    
+    return 0
+
+// MAIN FUNCTION - runs all demonstrations
 fn main():
-    print("Hello, Righton!")
+    print("---")
+    print("       RIGHTON LANGUAGE DEMONSTRATION")
+    print("---")
+    
+    
+    basics()
+    
+    
+    variables()
+    
+    
+    arithmetic()
+    
+    
+    comparisons()
+    
+    
+    logic()
+    
+    
+    conditionals()
+    
+    
+    while_loop()
+    
+    
+    for_loop()
+    
+    
+    nested_loops()
+    
+    
+    loop_control()
+    
+    
+    functions()
+    
+    
+    fstrings()
+    
+    
+    strings()
+    
+    
+    multiline_strings()
+    
+    
+    stdlib()
+    
+    
+    type_inference()
+    
+    
+    expression_conditions()
+    
+    
+    assignments()
+    
+    
+    chained_comparisons()
+    
+    
+    complex_expressions()
+    
+    
+    print("---")
+    print("        DEMONSTRATION COMPLETE")
+    print("---")
+    
     return 0

@@ -251,15 +251,33 @@ impl TypeChecker {
         Type::Void
     }
 
-    fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
-        let param_types = vec![Type::String; func.params.len()];
+fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
+        let mut param_types = Vec::new();
+        for expr in &func.body {
+            if let Expr::Let { name, typ, value, is_const: _ } = expr {
+                if func.params.contains(name) {
+                    let value_type = self.infer_expr(value)?;
+                    let annotated = typ.as_ref().map(|t| Type::from_str(t));
+                    let final_type = annotated.unwrap_or(value_type);
+                    param_types.push(final_type);
+                }
+            }
+        }
+
         for (i, param) in func.params.iter().enumerate() {
-            self.env.insert_param(param.clone(), param_types.get(i).cloned().unwrap_or(Type::String));
+            let typ = param_types.get(i).cloned().unwrap_or(Type::I32);
+            self.env.insert_param(param.clone(), typ);
         }
 
         self.env.locals.clear();
 
         for expr in &func.body {
+            if let Expr::Let { name, typ, value, is_const: _ } = expr {
+                let value_type = self.infer_expr(value)?;
+                let annotated = typ.as_ref().map(|t| Type::from_str(t));
+                let final_type = annotated.unwrap_or(value_type);
+                self.env.insert_local(name.clone(), final_type);
+            }
             self.check_expr(expr)?;
         }
 
@@ -344,6 +362,24 @@ impl TypeChecker {
                 Ok(Type::Void)
             }
             Expr::Return(inner) => self.infer_expr(inner),
+            Expr::While { condition, body } => {
+                let cond_type = self.infer_expr(condition)?;
+                if cond_type != Type::Bool && cond_type != Type::I32 {
+                    return Err(TypeError::new("while condition must be boolean"));
+                }
+                self.infer_block_type(body);
+                Ok(Type::Void)
+            }
+            Expr::For { variable, iterable, body } => {
+                let iter_type = self.infer_expr(iterable)?;
+                if iter_type != Type::String && iter_type != Type::I32 {
+                    return Err(TypeError::new("for iterable must be string or i32"));
+                }
+                self.env.insert_local(variable.clone(), Type::I32);
+                self.infer_block_type(body);
+                Ok(Type::Void)
+            }
+            Expr::Break | Expr::Continue => Ok(Type::Void),
         }
     }
 
@@ -589,6 +625,28 @@ impl TypeChecker {
                 self.infer_expr(inner)?;
                 Ok(Type::Void)
             }
+            Expr::While { condition, body } => {
+                let cond_type = self.infer_expr(condition)?;
+                if cond_type != Type::Bool && cond_type != Type::I32 {
+                    return Err(TypeError::new("while condition must be boolean"));
+                }
+                for expr in &body.stmts {
+                    self.check_expr(expr)?;
+                }
+                Ok(Type::Void)
+            }
+            Expr::For { variable, iterable, body } => {
+                let iter_type = self.infer_expr(iterable)?;
+                if iter_type != Type::String && iter_type != Type::I32 {
+                    return Err(TypeError::new("for iterable must be string or i32"));
+                }
+                self.env.insert_local(variable.clone(), Type::I32);
+                for expr in &body.stmts {
+                    self.check_expr(expr)?;
+                }
+                Ok(Type::Void)
+            }
+            Expr::Break | Expr::Continue => Ok(Type::Void),
         }
     }
 

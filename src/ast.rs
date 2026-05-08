@@ -65,12 +65,25 @@ pub enum Expr {
         then_branch: Box<Block>,
         else_branch: Option<Box<Block>>,
     },
+    While {
+        condition: Box<Expr>,
+        body: Box<Block>,
+    },
+    For {
+        variable: String,
+        iterable: Box<Expr>,
+        body: Box<Block>,
+    },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
     pub name: String,
     pub params: Vec<String>,
+    pub param_types: Vec<Option<String>>,
+    pub return_type: Option<String>,
     pub body: Vec<Expr>,
 }
 

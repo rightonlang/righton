@@ -39,6 +39,11 @@ pub enum TokenKind {
     Not,
     Mut,
     Import,
+    Extern,
+    While,
+    For,
+    Break,
+    Continue,
     Invalid(char),
 }
 
@@ -308,6 +313,8 @@ impl Lexer {
                         TokenKind::Fn
                     } else if ident == "false" {
                         TokenKind::BoolLiteral(false)
+                    } else if ident == "for" {
+                        TokenKind::For
                     } else {
                         TokenKind::Identifier(ident)
                     };
@@ -407,6 +414,11 @@ impl Lexer {
                     "not" => TokenKind::Not,
                     "mut" => TokenKind::Mut,
                     "import" => TokenKind::Import,
+                    "extern" => TokenKind::Extern,
+                    "while" => TokenKind::While,
+                    "for" => TokenKind::For,
+                    "break" => TokenKind::Break,
+                    "continue" => TokenKind::Continue,
                     _ => TokenKind::Identifier(ident),
                 };
                 Token {
@@ -485,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = tokenize("fn let const return if else mut import");
+        let tokens = tokenize("fn let const return if else mut import while for break continue");
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
@@ -498,6 +510,10 @@ mod tests {
                 TokenKind::Else,
                 TokenKind::Mut,
                 TokenKind::Import,
+                TokenKind::While,
+                TokenKind::For,
+                TokenKind::Break,
+                TokenKind::Continue,
             ]
         );
     }

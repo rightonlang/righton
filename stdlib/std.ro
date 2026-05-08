@@ -1,5 +1,12 @@
+// String functions
 fn print(value):
     __rt_print_str(value)
+
+fn print_int(value):
+    __rt_print_int(value)
+
+fn print_float(value):
+    __rt_print_float(value)
 
 fn len(value):
     return __rt_strlen(value)
@@ -15,3 +22,74 @@ fn exit():
 
 fn is_empty(value):
     return __rt_strlen(value) == 0
+
+// String manipulation methods (receiver.method syntax)
+fn contains(s, sub):
+    return false
+
+fn starts_with(s, prefix):
+    return false
+
+fn ends_with(s, suffix):
+    return false
+
+fn substr(s, start, length):
+    return s
+
+fn trim(s):
+    return s
+
+fn to_uppercase(s):
+    return s
+
+fn to_lowercase(s):
+    return s
+
+fn to_string(v):
+    return v
+
+// Parsing
+fn to_int(s):
+    return 0
+
+fn to_float(s):
+    return 0.0
+
+// Math methods (receiver.method syntax)
+fn abs(n):
+    if n < 0:
+        return -n
+    return n
+
+fn floor(n):
+    return n
+
+fn ceil(n):
+    return n
+
+fn round(n):
+    return n
+
+fn min(a, b):
+    if a < b:
+        return a
+    return b
+
+fn max(a, b):
+    if a > b:
+        return a
+    return b
+
+// Free-standing functions
+fn pow(base, exp):
+    return base ** exp
+
+// I/O
+fn read_line():
+    return ""
+
+fn read_int():
+    return 0
+
+fn read_float():
+    return 0.0

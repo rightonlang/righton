@@ -149,6 +149,22 @@ impl BorrowChecker {
                 self.bindings = saved;
                 Ok(())
             }
+            Expr::While { condition, body } => {
+                self.visit_expr(condition)?;
+                let saved = self.bindings.clone();
+                self.check_stmts(&body.stmts)?;
+                self.bindings = saved;
+                Ok(())
+            }
+            Expr::For { variable, iterable, body } => {
+                self.visit_expr(iterable)?;
+                let saved = self.bindings.clone();
+                self.bindings.insert(variable.clone(), Binding::new(BindingKind::Copy));
+                self.check_stmts(&body.stmts)?;
+                self.bindings = saved;
+                Ok(())
+            }
+            Expr::Break | Expr::Continue => Ok(()),
             _ => Ok(()),
         }
     }
