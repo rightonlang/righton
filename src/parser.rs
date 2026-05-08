@@ -7,6 +7,12 @@ pub struct ParseError {
 }
 
 impl ParseError {
+    fn with_location(message: impl Into<String>, line: usize, column: usize) -> Self {
+        Self {
+            message: format!("{} (line={}, col={})", message.into(), line, column),
+        }
+    }
+
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -50,13 +56,11 @@ impl<'a> Parser<'a> {
             self.advance();
             self.eat(expected)
         } else {
-            Err(ParseError::new(format!(
-                "expected {:?}, but found {:?} (line={}, col={})",
-                expected,
-                self.current,
+            Err(ParseError::with_location(
+                format!("expected {:?}, but found {:?}", expected, self.current),
                 self.lexer.line,
-                self.lexer.column
-            )))
+                self.lexer.column,
+            ))
         }
     }
 
@@ -108,6 +112,24 @@ impl<'a> Parser<'a> {
                 };
                 Ok(Expr::Unary(unop, Box::new(expr)))
             }
+            Some(TokenKind::Ampersand) => {
+                self.advance();
+                let mutable = if self.current == Some(TokenKind::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+
+                let name = if let Some(TokenKind::Identifier(name)) = self.current.clone() {
+                    self.advance();
+                    name
+                } else {
+                    return Err(ParseError::new("expected name after borrow operator"));
+                };
+
+                Ok(Expr::Borrow { name, mutable })
+            }
             Some(TokenKind::Not) => {
                 self.advance();
                 let expr = self.parse_primary()?;
@@ -147,6 +169,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(self.parse_fstring(&s))
             }
+            Some(TokenKind::Invalid(ch)) => Err(ParseError::with_location(
+                format!("unknown symbol '{}'", ch),
+                self.lexer.line,
+                self.lexer.column,
+            )),
             _ => Err(ParseError::new(format!(
                 "expected primary expression, found {:?} (line={}, col={})",
                 self.current, self.lexer.line, self.lexer.column
@@ -183,6 +210,44 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_import_stmt(&mut self) -> Result<Expr, ParseError> {
+        self.eat(TokenKind::Import)?;
+
+        let spec = match self.current.clone() {
+            Some(TokenKind::StringLiteral(path)) => {
+                self.advance();
+                path
+            }
+            Some(TokenKind::Identifier(name)) => {
+                self.advance();
+                let mut parts = vec![name];
+                while self.current == Some(TokenKind::Dot) {
+                    self.advance();
+                    if let Some(TokenKind::Identifier(part)) = self.current.clone() {
+                        self.advance();
+                        parts.push(part);
+                    } else {
+                        return Err(ParseError::with_location(
+                            "expected module name after '.'",
+                            self.lexer.line,
+                            self.lexer.column,
+                        ));
+                    }
+                }
+                parts.join("/")
+            }
+            _ => {
+                return Err(ParseError::with_location(
+                    "expected module name or string literal after import",
+                    self.lexer.line,
+                    self.lexer.column,
+                ));
+            }
+        };
+
+        Ok(Expr::Import(spec))
+    }
+
     pub fn parse_program(&mut self, profile: String, name: String) -> Result<Program, ParseError> {
         let mut functions = Vec::new();
         let mut globals = Vec::new();
@@ -197,6 +262,7 @@ impl<'a> Parser<'a> {
             }
 
             match self.current.clone() {
+                Some(TokenKind::Import) => globals.push(self.parse_import_stmt()?),
                 Some(TokenKind::Fn) => functions.push(self.parse_function()?),
                 Some(TokenKind::Let)
                 | Some(TokenKind::Const)
@@ -210,11 +276,19 @@ impl<'a> Parser<'a> {
                 | Some(TokenKind::Not)
                 | Some(TokenKind::StringLiteral(_))
                 | Some(TokenKind::MultilineString(_))
+                | Some(TokenKind::Ampersand)
                 | Some(TokenKind::If)
                 | Some(TokenKind::Return)
                 | Some(TokenKind::EqualEqual)
                 | Some(TokenKind::FString(_)) => {
                     globals.push(self.parse_expr()?);
+                }
+                Some(TokenKind::Invalid(ch)) => {
+                    return Err(ParseError::with_location(
+                        format!("unknown symbol '{}'", ch),
+                        self.lexer.line,
+                        self.lexer.column,
+                    ));
                 }
                 Some(tok) => {
                     return Err(ParseError::new(format!(
@@ -382,13 +456,11 @@ impl<'a> Parser<'a> {
 
         match self.current.clone() {
             Some(TokenKind::If) => self.parse_if_expr(),
-            Some(TokenKind::Else) => {
-                Err(ParseError::new(format!(
-                    "syntax error: 'else' without 'if' (line={}, col={})",
-                    self.lexer.line,
-                    self.lexer.column
-                )))
-            }
+            Some(TokenKind::Else) => Err(ParseError::with_location(
+                "syntax error: 'else' without 'if'",
+                self.lexer.line,
+                self.lexer.column,
+            )),
             Some(TokenKind::Const) | Some(TokenKind::Let) => {
                 let is_const = self.current == Some(TokenKind::Const);
                 self.advance();
@@ -396,7 +468,11 @@ impl<'a> Parser<'a> {
                     self.advance();
                     n
                 } else {
-                    return Err(ParseError::new("expected name of the variable"));
+                    return Err(ParseError::with_location(
+                        "expected name of the variable",
+                        self.lexer.line,
+                        self.lexer.column,
+                    ));
                 };
 
                 let typ = if self.current == Some(TokenKind::Colon) {
@@ -405,7 +481,11 @@ impl<'a> Parser<'a> {
                         self.advance();
                         Some(t)
                     } else {
-                        return Err(ParseError::new("expected type after :"));
+                        return Err(ParseError::with_location(
+                            "expected type after ':'",
+                            self.lexer.line,
+                            self.lexer.column,
+                        ));
                     }
                 } else {
                     None
@@ -574,6 +654,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_borrow_expression() {
+        let program = parse("&mut x");
+        match extract_global_expr(&program, 0) {
+            Expr::Borrow { name, mutable } => {
+                assert_eq!(name, "x");
+                assert!(*mutable);
+            }
+            _ => panic!("expected borrow expression"),
+        }
+    }
+
+    #[test]
     fn test_parse_let_declaration() {
         let program = parse("let x: i32 = 42");
         match extract_global_expr(&program, 0) {
@@ -607,6 +699,15 @@ mod tests {
                 assert_eq!(args.len(), 1);
             }
             _ => panic!("expected function call"),
+        }
+    }
+
+    #[test]
+    fn test_parse_import_statement() {
+        let program = parse("import utils.math");
+        match extract_global_expr(&program, 0) {
+            Expr::Import(spec) => assert_eq!(spec, "utils/math"),
+            _ => panic!("expected import statement"),
         }
     }
 
@@ -790,6 +891,15 @@ line2""""#);
     fn test_parse_with_comments() {
         let program = parse("x // comment\ny");
         assert_eq!(program.globals.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_invalid_symbol_reports_location() {
+        let mut lexer = Lexer::new("@");
+        let mut parser = Parser::new(&mut lexer);
+        let err = parser.parse_program("debug".to_string(), "test".to_string()).unwrap_err();
+        assert!(err.to_string().contains("unknown symbol '@'"));
+        assert!(err.to_string().contains("line=1"));
     }
 
     #[test]

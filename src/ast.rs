@@ -33,8 +33,13 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
+    Import(String),
     StringLiteral(String),
     Identifier(String),
+    Borrow {
+        name: String,
+        mutable: bool,
+    },
     FString(Vec<Expr>),
     MultilineString(String),
     Call {

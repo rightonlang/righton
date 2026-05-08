@@ -42,6 +42,8 @@ gcc ./example.o -o ./example
 
 ```
 // hello.ro
+import std
+
 fn main():
     print("Hello, Righton!")
     return 0
@@ -50,6 +52,4 @@ fn main():
 ## Planned Features
 
 * Type system improvements
-* Modules and packages
-* Standard library
 * Advanced data structures

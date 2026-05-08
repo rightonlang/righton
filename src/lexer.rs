@@ -33,9 +33,13 @@ pub enum TokenKind {
     GreaterEqual,
     Comma,
     Dot,
+    Ampersand,
     And,
     Or,
     Not,
+    Mut,
+    Import,
+    Invalid(char),
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +149,11 @@ impl Lexer {
             },
             '.' => Token {
                 kind: TokenKind::Dot,
+                line: self.line,
+                column: start_col,
+            },
+            '&' => Token {
+                kind: TokenKind::Ampersand,
                 line: self.line,
                 column: start_col,
             },
@@ -297,6 +306,8 @@ impl Lexer {
                     }
                     let kind = if ident == "fn" {
                         TokenKind::Fn
+                    } else if ident == "false" {
+                        TokenKind::BoolLiteral(false)
                     } else {
                         TokenKind::Identifier(ident)
                     };
@@ -331,7 +342,11 @@ impl Lexer {
                         column: start_col,
                     }
                 } else {
-                    panic!("unknown symbol '!'");
+                    Token {
+                        kind: TokenKind::Invalid('!'),
+                        line: self.line,
+                        column: start_col,
+                    }
                 }
             }
             '<' => {
@@ -390,6 +405,8 @@ impl Lexer {
                     "and" => TokenKind::And,
                     "or" => TokenKind::Or,
                     "not" => TokenKind::Not,
+                    "mut" => TokenKind::Mut,
+                    "import" => TokenKind::Import,
                     _ => TokenKind::Identifier(ident),
                 };
                 Token {
@@ -432,11 +449,11 @@ impl Lexer {
                 }
             }
             _ => {
-                eprintln!(
-                    "unknown symbol '{}' on {}:{}",
-                    ch, self.line, self.column
-                );
-                self.next_token()
+                Token {
+                    kind: TokenKind::Invalid(ch),
+                    line: self.line,
+                    column: start_col,
+                }
             }
         }
     }
@@ -468,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = tokenize("fn let const return if else");
+        let tokens = tokenize("fn let const return if else mut import");
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
@@ -479,6 +496,8 @@ mod tests {
                 TokenKind::Return,
                 TokenKind::If,
                 TokenKind::Else,
+                TokenKind::Mut,
+                TokenKind::Import,
             ]
         );
     }
@@ -522,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_delimiters() {
-        let tokens = tokenize("( ) : , .");
+        let tokens = tokenize("( ) : , . &");
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
@@ -532,6 +551,7 @@ mod tests {
                 TokenKind::Colon,
                 TokenKind::Comma,
                 TokenKind::Dot,
+                TokenKind::Ampersand,
             ]
         );
     }
@@ -588,6 +608,13 @@ line""""#);
         let tokens = tokenize("x // this is a comment\ny");
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(kinds, vec![TokenKind::Identifier("x".to_string()), TokenKind::Identifier("y".to_string())]);
+    }
+
+    #[test]
+    fn test_invalid_symbol() {
+        let tokens = tokenize("@");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].kind, TokenKind::Invalid('@')));
     }
 
     #[test]

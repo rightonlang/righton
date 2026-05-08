@@ -10,6 +10,8 @@ Righton is a small, expression-oriented language with Python-like blocks and LLV
 - Statements are separated by newlines
 - Blocks follow `:` and use indentation in normal source style
 - The compiler currently accepts top-level expressions and function definitions
+- `import std` pulls in the standard library
+- `import "path/to/module.ro"` and `import my.module` pull in other source files before codegen
 
 ## Literals
 
@@ -73,7 +75,7 @@ print("Hello")
 asm("nop")
 ```
 
-- `print(...)` emits output for integers, floats, and strings
+- `print(...)`, `len(...)`, `read_file(...)`, `write_file(...)`, and `exit(...)` are available after `import std`
 - `asm(...)` is recognized by the compiler as a builtin hook
 
 ## Notes

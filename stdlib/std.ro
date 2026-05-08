@@ -1,0 +1,17 @@
+fn print(value):
+    __rt_print_str(value)
+
+fn len(value):
+    return __rt_strlen(value)
+
+fn read_file(path):
+    return __rt_read_file(path)
+
+fn write_file(path, contents):
+    return __rt_write_file(path, contents)
+
+fn exit():
+    __rt_exit(0)
+
+fn is_empty(value):
+    return __rt_strlen(value) == 0

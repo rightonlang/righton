@@ -346,4 +346,166 @@ mod tests {
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
     }
+
+    #[test]
+    fn test_cli_borrow_codegen_succeeds() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let a = 1\n    let r = &a\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        assert!(output.exists());
+
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("bitcast i32*"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_cli_borrow_conflict_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let a = 1\n    let r = &a\n    let m = &mut a").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("mutably borrow"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_cli_move_after_borrow_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let r = &s\n    let t = s").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("move"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_cli_imports_another_module() {
+        let module = temp_file("ron");
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+
+        fs::write(
+            &module,
+            "fn answer():\n    return 41\n",
+        )
+        .unwrap();
+        fs::write(
+            &input,
+            format!(
+                "import \"{}\"\nfn main():\n    answer()\n    return 0\n",
+                module.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("__answer"));
+        assert!(ir.contains("call i32 @"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(module);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_cli_stdlib_len_builtin() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "import std\nfn main():\n    return len(\"hello\")").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("@__rt_strlen"));
+        assert!(ir.contains("trunc i64"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_cli_print_without_stdlib_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    print(1)").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_cli_unknown_function_suggests_stdlib_import() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    len(\"hello\")").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("import std"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
 }
