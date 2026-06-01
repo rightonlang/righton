@@ -10,7 +10,19 @@
 
 # ide files
 .idea
-.vscode
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+!*.code-workspace
+!.vscode/righton-vscode/
+!.vscode/righton-vscode/**
+
+# Built Visual Studio Code Extensions
+*.vsix
 
 # windows
 /vcpkg.json
@@ -18,9 +30,9 @@
 
 /arms_cache
 example*
-test*
+!tests/
+!tests/**
 tmp*
-!tests
-!*test.rs
+!**/*test.rs
 !examples.md
 !example.ro 

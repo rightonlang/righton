@@ -1,0 +1,69 @@
+{
+  "name": "righton-language",
+  "displayName": "Righton Language",
+  "description": "Syntax highlighting and LSP support for the Righton programming language",
+  "version": "0.1.0",
+  "publisher": "rightonlang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "righton",
+    "language",
+    "syntax",
+    "highlighting",
+    "lsp"
+  ],
+  "activationEvents": [
+    "onLanguage:righton"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "righton",
+        "aliases": [
+          "Righton",
+          "righton"
+        ],
+        "extensions": [
+          ".ro"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "righton",
+        "scopeName": "source.righton",
+        "path": "./syntaxes/righton.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "righton.compile",
+        "title": "Righton: Compile Current File"
+      }
+    ]
+  },
+  "configuration": {
+    "title": "Righton",
+    "properties": {
+      "righton.lsp.path": {
+        "type": "string",
+        "default": "righton-lsp",
+        "description": "Path to the righton-lsp binary"
+      },
+      "righton.compiler.path": {
+        "type": "string",
+        "default": "righton",
+        "description": "Path to the righton compiler binary"
+      }
+    }
+  }
+}

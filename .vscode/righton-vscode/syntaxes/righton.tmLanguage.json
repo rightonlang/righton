@@ -1,0 +1,185 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Righton",
+  "scopeName": "source.righton",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#builtinTypes" },
+    { "include": "#stdlibFunctions" },
+    { "include": "#functionDeclaration" },
+    { "include": "#operators" },
+    { "include": "#punctuation" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.righton",
+          "begin": "//",
+          "end": "$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.righton",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.righton",
+              "match": "\\\\[ntr0\\\\\"]"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.fstring.righton",
+          "begin": "f\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.righton",
+              "match": "\\\\[ntr0\\\\\"]"
+            },
+            {
+              "name": "meta.embedded.interpolation.righton",
+              "begin": "\\{",
+              "end": "\\}",
+              "patterns": [
+                { "include": "#strings" },
+                { "include": "#numbers" },
+                { "include": "#keywords" },
+                { "include": "#operators" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.righton",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.righton",
+              "match": "\\\\[ntr0\\\\\"]"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.righton",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.righton",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.righton",
+          "match": "\\b(if|else|elif|while|for|in|break|continue|return|match)\\b"
+        },
+        {
+          "name": "keyword.declaration.righton",
+          "match": "\\b(fn|let|const|mut|import|extern|struct|enum|impl|type)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.righton",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "constant.language.boolean.righton",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "builtinTypes": {
+      "patterns": [
+        {
+          "name": "support.type.righton",
+          "match": "\\b(i32|f64|bool|str|string|ptr|float|double)\\b"
+        }
+      ]
+    },
+    "stdlibFunctions": {
+      "patterns": [
+        {
+          "name": "support.function.righton",
+          "match": "\\b(print|print_int|print_float|len|read_file|write_file|exit|is_empty|contains|starts_with|ends_with|substr|trim|to_uppercase|to_lowercase|to_string|str_repeat|to_int|to_float|to_hex|abs|abs_f|floor|ceil|round|sqrt|sin|cos|tan|min|max|pow|read_line|read_int|read_float|asm|list_len|list_push|list_pop|list_free)\\b"
+        }
+      ]
+    },
+    "functionDeclaration": {
+      "patterns": [
+        {
+          "name": "meta.function.righton",
+          "begin": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "beginCaptures": {
+            "1": { "name": "keyword.declaration.righton" },
+            "2": { "name": "entity.name.function.righton" }
+          },
+          "end": "(?=\\n|$)",
+          "patterns": [
+            { "include": "#punctuation" }
+          ]
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arithmetic.righton",
+          "match": "\\*\\*=|\\*\\*|\\*=|\\*|/=|/|%=|%|\\+\\+|\\+=|\\+|-=|--|-|="
+        },
+        {
+          "name": "keyword.operator.comparison.righton",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.righton",
+          "match": "="
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.arguments.righton",
+          "match": "[\\(\\)]"
+        },
+        {
+          "name": "punctuation.definition.block.righton",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.separator.righton",
+          "match": "[,.]"
+        },
+        {
+          "name": "punctuation.definition.brackets.righton",
+          "match": "[\\[\\]{}]"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.righton",
+          "match": "[a-zA-Z_][a-zA-Z0-9_]*"
+        }
+      ]
+    }
+  },
+  "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
