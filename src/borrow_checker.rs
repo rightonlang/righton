@@ -131,6 +131,20 @@ impl BorrowChecker {
                 Ok(())
             }
             Expr::FString(_) => Ok(()),
+            Expr::List(items) => {
+                for item in items {
+                    self.visit_expr(item)?;
+                }
+                Ok(())
+            }
+            Expr::Index { target, index } => {
+                self.visit_expr(target)?;
+                self.visit_expr(index)
+            }
+            Expr::AssignIndex { index, value, .. } => {
+                self.visit_expr(index)?;
+                self.visit_expr(value)
+            }
             Expr::Let { value, .. } | Expr::Assign { value, .. } => self.visit_expr(value),
             Expr::If {
                 condition,
@@ -162,6 +176,22 @@ impl BorrowChecker {
                 self.bindings.insert(variable.clone(), Binding::new(BindingKind::Copy));
                 self.check_stmts(&body.stmts)?;
                 self.bindings = saved;
+                Ok(())
+            }
+            Expr::ForRange { variable, start, end, body } => {
+                self.visit_expr(start)?;
+                self.visit_expr(end)?;
+                let saved = self.bindings.clone();
+                self.bindings.insert(variable.clone(), Binding::new(BindingKind::Copy));
+                self.check_stmts(&body.stmts)?;
+                self.bindings = saved;
+                Ok(())
+            }
+            Expr::Match { expr, arms } => {
+                self.visit_expr(expr)?;
+                for arm in arms {
+                    self.visit_expr(&arm.body)?;
+                }
                 Ok(())
             }
             Expr::Break | Expr::Continue => Ok(()),

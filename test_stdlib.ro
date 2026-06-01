@@ -1,0 +1,6 @@
+import std
+
+fn main():
+    let s = "Hello, World!"
+    print("contains:")
+    print_int(contains(s, "World"))

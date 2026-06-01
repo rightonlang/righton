@@ -7,6 +7,9 @@ pub enum Type {
     F64,
     Bool,
     String,
+    Struct(String),
+    Enum(String),
+    Tuple(Vec<Type>),
     Void,
     Unknown,
 }
@@ -15,9 +18,9 @@ impl Type {
     pub fn from_str(s: &str) -> Self {
         match s {
             "i32" => Type::I32,
-            "f64" => Type::F64,
+            "f64" | "float" | "double" => Type::F64,
             "bool" => Type::Bool,
-            "str" => Type::String,
+            "str" | "string" | "ptr" => Type::String,
             _ => Type::Unknown,
         }
     }
@@ -28,6 +31,9 @@ impl Type {
             Type::F64 => "double",
             Type::Bool => "i32",
             Type::String => "i8*",
+            Type::Struct(_) => "i8*",
+            Type::Enum(_) => "i8*",
+            Type::Tuple(_) => "i8*",
             Type::Void => "void",
             Type::Unknown => "i8*",
         }
@@ -82,6 +88,9 @@ struct TypeEnv {
     params: HashMap<String, Type>,
     globals: HashMap<String, Type>,
     functions: HashMap<String, Type>,
+    structs: Vec<crate::ast::StructDef>,
+    enums: Vec<crate::ast::EnumDef>,
+    type_aliases: HashMap<String, String>,
 }
 
 impl TypeEnv {
@@ -91,6 +100,9 @@ impl TypeEnv {
             params: HashMap::new(),
             globals: HashMap::new(),
             functions: HashMap::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            type_aliases: HashMap::new(),
         }
     }
 
@@ -118,12 +130,34 @@ impl TypeEnv {
     fn insert_function(&mut self, name: String, typ: Type) {
         self.functions.insert(name, typ);
     }
+
+    fn resolve_type(&self, s: &str, self_struct: Option<&str>) -> Type {
+        if s == "Self" {
+            if let Some(struct_name) = self_struct {
+                return Type::Struct(struct_name.to_string());
+            }
+        }
+        let mut current = s.to_string();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..16 {
+            if let Some(r) = self.type_aliases.get(&current) {
+                if !seen.insert(current.clone()) {
+                    break;
+                }
+                current = r.clone();
+            } else {
+                break;
+            }
+        }
+        Type::from_str(&current)
+    }
 }
 
 pub struct TypeChecker {
     env: TypeEnv,
     stdlib_enabled: bool,
     function_aliases: HashMap<String, String>,
+    self_struct_type: Option<String>,
 }
 
 impl TypeChecker {
@@ -132,6 +166,7 @@ impl TypeChecker {
             env: TypeEnv::new(),
             stdlib_enabled: false,
             function_aliases: HashMap::new(),
+            self_struct_type: None,
         }
     }
 
@@ -141,31 +176,78 @@ impl TypeChecker {
 
     pub fn check_program(&mut self, program: &Program, stdlib_enabled: bool) -> TypeResult<()> {
         self.stdlib_enabled = stdlib_enabled;
+        self.env.structs = program.structs.clone();
+        self.env.enums = program.enums.clone();
+        for alias in &program.type_aliases {
+            self.env.type_aliases.insert(alias.name.clone(), alias.value.clone());
+        }
 
         self.register_globals(&program.globals)?;
         self.register_functions(&program.functions)?;
 
+        // Register impl methods as functions
+        for impl_def in &program.impls {
+            for method in &impl_def.methods {
+                self.env.insert_function(method.name.clone(), Type::Void);
+            }
+        }
+
         self.resolve_function_types(&program)?;
 
+        // Check impl methods
         for func in &program.functions {
             self.check_function(func)?;
         }
+        for impl_def in &program.impls {
+            for method in &impl_def.methods {
+                self.self_struct_type = Some(impl_def.struct_name.clone());
+                self.check_function(method)?;
+            }
+        }
+        self.self_struct_type = None;
 
         Ok(())
     }
 
     fn register_globals(&mut self, globals: &[Expr]) -> TypeResult<()> {
         for global in globals {
-            match global {
+            let _ = match global {
                 Expr::Import(_) => {}
-                Expr::Let { name, typ, value, is_const: _ } => {
-                    let value_type = self.infer_expr(value)?;
-                    let annotated = typ.as_ref().map(|t| Type::from_str(t));
+            Expr::Let { name, typ, value, is_const: _ } => {
+                let value_type = self.infer_expr(value)?;
+                let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
+
+                if let Some(expected) = &annotated {
+                        if !self.types_compatible(&value_type, expected) {
+                            return Err(TypeError::new(format!(
+                                "cannot assign {} to variable of type {}",
+                                self.type_name(&value_type),
+                                self.type_name(expected)
+                            )));
+                        }
+                    }
+
                     let final_type = annotated.unwrap_or(value_type);
                     self.env.insert_global(name.clone(), final_type);
                 }
+                Expr::Assign { name, value } => {
+                    let value_type = self.infer_expr(value)?;
+                    let var_type = self.env.get(name);
+
+                    if var_type == Type::Unknown {
+                        return Err(TypeError::new(format!("unknown variable: {}", name)));
+                    }
+
+                    if !self.types_compatible(&value_type, &var_type) {
+                        return Err(TypeError::new(format!(
+                            "cannot assign {} to variable of type {}",
+                            self.type_name(&value_type),
+                            self.type_name(&var_type)
+                        )));
+                    }
+                }
                 _ => {}
-            }
+            };
         }
         Ok(())
     }
@@ -180,7 +262,9 @@ impl TypeChecker {
     fn resolve_function_types(&mut self, program: &Program) -> TypeResult<()> {
         for _ in 0..8 {
             let mut changed = false;
-            for func in &program.functions {
+            for func in program.functions.iter().chain(
+                program.impls.iter().flat_map(|i| i.methods.iter())
+            ) {
                 let prev = self.env.functions.get(&func.name).cloned().unwrap_or(Type::Void);
                 let inferred = self.infer_function_return_type(func)?;
 
@@ -257,7 +341,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             if let Expr::Let { name, typ, value, is_const: _ } = expr {
                 if func.params.contains(name) {
                     let value_type = self.infer_expr(value)?;
-                    let annotated = typ.as_ref().map(|t| Type::from_str(t));
+                    let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
                     let final_type = annotated.unwrap_or(value_type);
                     param_types.push(final_type);
                 }
@@ -265,7 +349,15 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
         }
 
         for (i, param) in func.params.iter().enumerate() {
-            let typ = param_types.get(i).cloned().unwrap_or(Type::I32);
+            let typ = if param == "self" {
+                if let Some(ref struct_name) = self.self_struct_type {
+                    Type::Struct(struct_name.clone())
+                } else {
+                    param_types.get(i).cloned().unwrap_or(Type::I32)
+                }
+            } else {
+                param_types.get(i).cloned().unwrap_or(Type::I32)
+            };
             self.env.insert_param(param.clone(), typ);
         }
 
@@ -274,7 +366,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
         for expr in &func.body {
             if let Expr::Let { name, typ, value, is_const: _ } = expr {
                 let value_type = self.infer_expr(value)?;
-                let annotated = typ.as_ref().map(|t| Type::from_str(t));
+                let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
                 let final_type = annotated.unwrap_or(value_type);
                 self.env.insert_local(name.clone(), final_type);
             }
@@ -292,6 +384,45 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
     fn infer_expr(&mut self, expr: &Expr) -> TypeResult<Type> {
         match expr {
             Expr::Import(_) => Ok(Type::Void),
+            Expr::List(items) => {
+                if items.is_empty() {
+                    return Ok(Type::Void);
+                }
+                let first_type = self.infer_expr(&items[0])?;
+                for item in &items[1..] {
+                    let t = self.infer_expr(item)?;
+                    if t != first_type {
+                        return Err(TypeError::new("all list elements must have the same type"));
+                    }
+                }
+                Ok(Type::String) // store as pointer for now
+            }
+            Expr::Index { target, index } => {
+                let target_type = self.infer_expr(target)?;
+                let index_type = self.infer_expr(index)?;
+                if index_type != Type::I32 {
+                    return Err(TypeError::new("list index must be an integer"));
+                }
+                if target_type != Type::String && target_type != Type::I32 && target_type != Type::Unknown {
+                    return Err(TypeError::new("cannot index into this type"));
+                }
+                Ok(Type::I32) // array elements are i32 for now
+            }
+            Expr::AssignIndex { name, index, value } => {
+                let var_type = self.env.get(name);
+                if var_type == Type::Unknown {
+                    return Err(TypeError::new(format!("unknown variable: {}", name)));
+                }
+                let index_type = self.infer_expr(index)?;
+                if index_type != Type::I32 {
+                    return Err(TypeError::new("list index must be an integer"));
+                }
+                let value_type = self.infer_expr(value)?;
+                if value_type != Type::I32 {
+                    return Err(TypeError::new("list element value must be i32"));
+                }
+                Ok(Type::Void)
+            }
             Expr::Literal(Literal::Int(_)) => Ok(Type::I32),
             Expr::Literal(Literal::Float(_)) => Ok(Type::F64),
             Expr::Literal(Literal::Bool(_)) => Ok(Type::Bool),
@@ -327,7 +458,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             }
             Expr::Let { name, typ, value, is_const: _ } => {
                 let value_type = self.infer_expr(value)?;
-                let annotated = typ.as_ref().map(|t| Type::from_str(t));
+                let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
 
                 if let Some(expected) = &annotated {
                     if !self.types_compatible(&value_type, expected) {
@@ -379,7 +510,168 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 self.infer_block_type(body);
                 Ok(Type::Void)
             }
+            Expr::ForRange { variable, start, end, body } => {
+                let start_type = self.infer_expr(start)?;
+                let end_type = self.infer_expr(end)?;
+                if start_type != Type::I32 || end_type != Type::I32 {
+                    return Err(TypeError::new("for range bounds must be integers"));
+                }
+                self.env.insert_local(variable.clone(), Type::I32);
+                self.infer_block_type(body);
+                Ok(Type::Void)
+            }
+            Expr::Match { expr, arms } => {
+                let match_type = self.infer_expr(expr)?;
+                if match_type != Type::I32 && !matches!(match_type, Type::Enum(_)) {
+                    return Err(TypeError::new("match expression must be an integer or enum"));
+                }
+                if arms.is_empty() {
+                    return Err(TypeError::new("match must have at least one arm"));
+                }
+                let mut seen_wildcard = false;
+                for arm in arms {
+                    if matches!(arm.pattern, crate::ast::MatchPattern::Wildcard) {
+                        seen_wildcard = true;
+                    } else if seen_wildcard {
+                        return Err(TypeError::new("wildcard arm must be the last arm"));
+                    }
+
+                    // For enum variant patterns, validate variant exists and add bindings
+                    if let crate::ast::MatchPattern::Variant { name, bindings } = &arm.pattern {
+                        if let Type::Enum(ref enum_name) = match_type {
+                            let enums = self.env.enums.clone();
+                            let edef = enums.iter().find(|e| &e.name == enum_name);
+                            if let Some(e) = edef {
+                                let variant = e.variants.iter().find(|v| &v.name == name);
+                                if variant.is_none() {
+                                    return Err(TypeError::new(format!(
+                                        "unknown variant {} for enum {}", name, enum_name
+                                    )));
+                                }
+                                let v = variant.unwrap();
+                                if bindings.len() != v.fields.len() {
+                                    return Err(TypeError::new(format!(
+                                        "variant {} expects {} bindings, got {}",
+                                        name, v.fields.len(), bindings.len()
+                                    )));
+                                }
+                                for (i, binding) in bindings.iter().enumerate() {
+                                    let field_type = Type::from_str(&v.fields[i]);
+                                    self.env.insert_local(binding.clone(), field_type);
+                                }
+                            } else {
+                                return Err(TypeError::new(format!(
+                                    "unknown enum type {}", enum_name
+                                )));
+                            }
+                        } else {
+                            return Err(TypeError::new(
+                                "variant pattern can only be used on enum types"
+                            ));
+                        }
+                    }
+                }
+                // Infer from first arm
+                let ret_type = self.infer_expr(&arms[0].body)?;
+                for arm in &arms[1..] {
+                    let t = self.infer_expr(&arm.body)?;
+                    if t != ret_type && ret_type != Type::Void {
+                        return Err(TypeError::new("all match arms must return the same type"));
+                    }
+                }
+                Ok(ret_type)
+            }
             Expr::Break | Expr::Continue => Ok(Type::Void),
+            Expr::FieldAccess { target, field } => {
+                let target_type = self.infer_expr(target)?;
+                if let Type::Struct(struct_name) = &target_type {
+                    if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name) {
+                        if let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
+                            return Ok(Type::from_str(&sf.typ));
+                        }
+                    }
+                    return Err(TypeError::new(format!("unknown field: {}", field)));
+                }
+                Err(TypeError::new("field access on non-struct type"))
+            }
+            Expr::FieldAssign { target, field, value } => {
+                let target_type = self.infer_expr(target)?;
+                let value_type = self.infer_expr(value)?;
+                if let Type::Struct(struct_name) = &target_type {
+                    if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name) {
+                        if let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
+                            let expected = Type::from_str(&sf.typ);
+                            if !self.types_compatible(&value_type, &expected) {
+                                return Err(TypeError::new(format!(
+                                    "cannot assign {} to field {} of type {}",
+                                    self.type_name(&value_type), field, self.type_name(&expected)
+                                )));
+                            }
+                            return Ok(Type::Void);
+                        }
+                    }
+                    return Err(TypeError::new(format!("unknown field: {}", field)));
+                }
+                Err(TypeError::new("field assignment on non-struct type"))
+            }
+            Expr::StructLiteral { name, fields } => {
+                let struct_def = self.env.structs.iter().find(|s| &s.name == name).cloned();
+                if let Some(sdef) = struct_def {
+                    for (fname, fval) in fields {
+                        let val_type = self.infer_expr(fval)?;
+                        if let Some(sf) = sdef.fields.iter().find(|f| &f.name == fname) {
+                            let expected = Type::from_str(&sf.typ);
+                            if !self.types_compatible(&val_type, &expected) {
+                                return Err(TypeError::new(format!(
+                                    "field {} has type {}, got {}",
+                                    fname, sf.typ, self.type_name(&val_type)
+                                )));
+                            }
+                        } else {
+                            return Err(TypeError::new(format!("unknown field: {}", fname)));
+                        }
+                    }
+                    return Ok(Type::Struct(name.clone()));
+                }
+                Err(TypeError::new(format!("unknown struct: {}", name)))
+            }
+            Expr::Tuple(elements) => {
+                let mut types = Vec::new();
+                for elem in elements {
+                    types.push(self.infer_expr(elem)?);
+                }
+                Ok(Type::Tuple(types))
+            }
+            Expr::TupleAccess { target, index } => {
+                let target_type = self.infer_expr(target)?;
+                if let Type::Tuple(types) = &target_type {
+                    if *index < types.len() {
+                        return Ok(types[*index].clone());
+                    }
+                    return Err(TypeError::new(format!("tuple index {} out of bounds", index)));
+                }
+                Err(TypeError::new("tuple access on non-tuple type"))
+            }
+            Expr::EnumLiteral { enum_name, variant_name, args } => {
+                let enum_def = self.env.enums.iter().find(|e| &e.name == enum_name).cloned();
+                if let Some(edef) = enum_def {
+                    let variant = edef.variants.iter().find(|v| &v.name == variant_name);
+                    if let Some(v) = variant {
+                        if v.fields.len() != args.len() {
+                            return Err(TypeError::new(format!(
+                                "variant {} expects {} fields, got {}",
+                                variant_name, v.fields.len(), args.len()
+                            )));
+                        }
+                        for arg in args {
+                            self.infer_expr(arg)?;
+                        }
+                        return Ok(Type::Enum(enum_name.clone()));
+                    }
+                    return Err(TypeError::new(format!("unknown variant: {}", variant_name)));
+                }
+                Err(TypeError::new(format!("unknown enum: {}", enum_name)))
+            }
         }
     }
 
@@ -390,6 +682,15 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Expr::Literal(Literal::Bool(_)) => Type::Bool,
             Expr::Literal(Literal::Str(_)) => Type::String,
             Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => Type::String,
+            Expr::List(_) => Type::String,
+            Expr::Index { .. } => Type::I32,
+            Expr::Match { arms, .. } => {
+                if let Some(first) = arms.first() {
+                    self.infer_expr_without_env(&first.body)
+                } else {
+                    Type::Void
+                }
+            }
             Expr::Call { func, args: _ } => {
                 if let Some(ret) = self.env.functions.get(func) {
                     ret.clone()
@@ -399,6 +700,15 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                     Type::Void
                 }
             }
+            Expr::EnumLiteral { enum_name, .. } => Type::Enum(enum_name.clone()),
+            Expr::Tuple(elements) => {
+                if let Some(first) = elements.first() {
+                    self.infer_expr_without_env(first)
+                } else {
+                    Type::Void
+                }
+            }
+            Expr::TupleAccess { .. } => Type::I32,
             _ => Type::Void,
         }
     }
@@ -444,9 +754,23 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             "__rt_strlen" => return Some(Type::I32),
             "__rt_read_file" => return Some(Type::String),
             "__rt_write_file" => return Some(Type::I32),
-            "__rt_exit" | "__rt_print_str" | "__rt_print_int" | "__rt_print_float" => {
+            "__rt_exit" | "__rt_print_str" | "__rt_print_int" | "__rt_print_float" | "__rt_free" => {
                 return Some(Type::Void)
             }
+            "__rt_contains" | "__rt_starts_with" | "__rt_ends_with" | "__rt_to_int" => {
+                return Some(Type::I32)
+            }
+            "__rt_substr" | "__rt_trim" | "__rt_to_uppercase" | "__rt_to_lowercase"
+            | "__rt_read_line" | "__rt_to_string_int" | "__rt_to_string_float" => {
+                return Some(Type::String)
+            }
+            "__rt_to_float" | "__rt_floor" | "__rt_ceil" | "__rt_round"
+            | "__rt_sqrt" | "__rt_sin" | "__rt_cos" | "__rt_tan" | "__rt_abs" => {
+                return Some(Type::F64)
+            }
+            "__rt_list_len" | "__rt_list_pop" => return Some(Type::I32),
+            "__rt_list_push" => return Some(Type::String),
+            "__rt_to_hex" | "__rt_str_repeat" => return Some(Type::String),
             _ => {}
         }
 
@@ -458,6 +782,12 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             "print" | "asm" | "exit" | "write_file" => Some(Type::Void),
             "len" => Some(Type::I32),
             "read_file" => Some(Type::String),
+            "contains" | "starts_with" | "ends_with" | "to_int" | "is_empty" => Some(Type::I32),
+            "substr" | "trim" | "to_uppercase" | "to_lowercase" | "to_string"
+            | "read_line" => Some(Type::String),
+            "to_float" | "floor" | "ceil" | "round" => Some(Type::F64),
+            "sqrt" | "sin" | "cos" | "tan" => Some(Type::F64),
+            "to_hex" | "str_repeat" => Some(Type::String),
             _ => None,
         }
     }
@@ -486,6 +816,11 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
         let l_type = self.infer_expr(l)?;
         let r_type = self.infer_expr(r)?;
+
+        // String concatenation
+        if matches!(op, BinOp::Add) && l_type == Type::String && r_type == Type::String {
+            return Ok(Type::String);
+        }
 
         if !l_type.can_arith() || !r_type.can_arith() {
             return Err(TypeError::new(format!(
@@ -543,6 +878,26 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => Ok(Type::Void),
             Expr::Identifier(_) => Ok(Type::Void),
             Expr::Borrow { .. } => Ok(Type::Void),
+            Expr::List(items) => {
+                for item in items {
+                    self.check_expr(item)?;
+                }
+                Ok(Type::Void)
+            }
+            Expr::Index { target, index } => {
+                self.check_expr(target)?;
+                self.check_expr(index)?;
+                Ok(Type::Void)
+            }
+            Expr::AssignIndex { name, index, value } => {
+                let var_type = self.env.get(name);
+                if var_type == Type::Unknown {
+                    return Err(TypeError::new(format!("unknown variable: {}", name)));
+                }
+                self.check_expr(index)?;
+                self.check_expr(value)?;
+                Ok(Type::Void)
+            }
             Expr::Call { func, args } => {
                 self.check_call(func, args)?;
                 Ok(Type::Void)
@@ -566,6 +921,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                     env: then_env,
                     stdlib_enabled: self.stdlib_enabled,
                     function_aliases: self.function_aliases.clone(),
+                    self_struct_type: self.self_struct_type.clone(),
                 };
                 for expr in &then_branch.stmts {
                     then_checker.check_expr(expr)?;
@@ -577,6 +933,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                         env: else_env,
                         stdlib_enabled: self.stdlib_enabled,
                         function_aliases: self.function_aliases.clone(),
+                        self_struct_type: self.self_struct_type.clone(),
                     };
                     for expr in &else_block.stmts {
                         else_checker.check_expr(expr)?;
@@ -587,7 +944,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             }
             Expr::Let { name, typ, value, is_const: _ } => {
                 let value_type = self.infer_expr(value)?;
-                let annotated = typ.as_ref().map(|t| Type::from_str(t));
+                let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
 
                 if let Some(expected) = &annotated {
                     if !self.types_compatible(&value_type, expected) {
@@ -646,7 +1003,57 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 }
                 Ok(Type::Void)
             }
+            Expr::ForRange { variable, start, end, body } => {
+                let start_type = self.infer_expr(start)?;
+                let end_type = self.infer_expr(end)?;
+                if start_type != Type::I32 || end_type != Type::I32 {
+                    return Err(TypeError::new("for range bounds must be integers"));
+                }
+                self.env.insert_local(variable.clone(), Type::I32);
+                for expr in &body.stmts {
+                    self.check_expr(expr)?;
+                }
+                Ok(Type::Void)
+            }
+            Expr::Match { expr, arms } => {
+                self.check_expr(expr)?;
+                for arm in arms {
+                    self.check_expr(&arm.body)?;
+                }
+                Ok(Type::Void)
+            }
             Expr::Break | Expr::Continue => Ok(Type::Void),
+            Expr::FieldAccess { target, .. } => {
+                self.check_expr(target)?;
+                Ok(Type::Void)
+            }
+            Expr::FieldAssign { target, value, .. } => {
+                self.check_expr(target)?;
+                self.check_expr(value)?;
+                Ok(Type::Void)
+            }
+            Expr::StructLiteral { fields, .. } => {
+                for (_, val) in fields {
+                    self.check_expr(val)?;
+                }
+                Ok(Type::Void)
+            }
+            Expr::Tuple(elements) => {
+                for elem in elements {
+                    self.check_expr(elem)?;
+                }
+                Ok(Type::Void)
+            }
+            Expr::TupleAccess { target, .. } => {
+                self.check_expr(target)?;
+                Ok(Type::Void)
+            }
+            Expr::EnumLiteral { args, .. } => {
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                Ok(Type::Void)
+            }
         }
     }
 
@@ -660,6 +1067,8 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             (Type::F64, Type::I32) => true,
             (Type::Bool, Type::I32) => true,
             (Type::I32, Type::Bool) => true,
+            (Type::Struct(a), Type::Struct(b)) => a == b,
+            (Type::Tuple(a), Type::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| self.types_compatible(x, y)),
             _ => false,
         }
     }
@@ -670,6 +1079,9 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Type::F64 => "f64".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "str".to_string(),
+            Type::Struct(name) => name.clone(),
+            Type::Enum(name) => format!("enum {}", name),
+            Type::Tuple(types) => format!("({})", types.iter().map(|t| self.type_name(t)).collect::<Vec<_>>().join(", ")),
             Type::Void => "void".to_string(),
             Type::Unknown => "unknown".to_string(),
         }

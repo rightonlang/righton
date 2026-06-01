@@ -18,8 +18,8 @@
 
 /arms_cache
 example*
-test2
-test3
-test4
+test*
+!tests
+!*test.rs
 !examples.md
 !example.ro 

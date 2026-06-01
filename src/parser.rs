@@ -32,19 +32,23 @@ impl std::error::Error for ParseError {}
 pub struct Parser<'a> {
     lexer: &'a mut Lexer,
     current: Option<TokenKind>,
+    current_col: usize,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: &'a mut Lexer) -> Self {
-        let first = lexer.next_token().kind;
+        let first = lexer.next_token();
+        let col = first.column;
         Self {
             lexer,
-            current: Some(first),
+            current: Some(first.kind),
+            current_col: col,
         }
     }
 
     fn advance(&mut self) {
         let tok = self.lexer.next_token();
+        self.current_col = tok.column;
         self.current = Some(tok.kind);
     }
 
@@ -153,9 +157,19 @@ impl<'a> Parser<'a> {
             }
             Some(TokenKind::LParen) => {
                 self.advance();
-                let expr = self.parse_expr()?;
-                self.eat(TokenKind::RParen)?;
-                Ok(expr)
+                let first = self.parse_expr()?;
+                if self.current == Some(TokenKind::Comma) {
+                    let mut elements = vec![first];
+                    while self.current == Some(TokenKind::Comma) {
+                        self.advance();
+                        elements.push(self.parse_expr()?);
+                    }
+                    self.eat(TokenKind::RParen)?;
+                    Ok(Expr::Tuple(elements))
+                } else {
+                    self.eat(TokenKind::RParen)?;
+                    Ok(first)
+                }
             }
             Some(TokenKind::StringLiteral(s)) => {
                 self.advance();
@@ -168,6 +182,22 @@ impl<'a> Parser<'a> {
             Some(TokenKind::FString(s)) => {
                 self.advance();
                 Ok(self.parse_fstring(&s))
+            }
+            Some(TokenKind::LBracket) => {
+                self.advance();
+                let mut elements = Vec::new();
+                if self.current != Some(TokenKind::RBracket) {
+                    loop {
+                        elements.push(self.parse_expr()?);
+                        if self.current == Some(TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.eat(TokenKind::RBracket)?;
+                Ok(Expr::List(elements))
             }
             Some(TokenKind::Invalid(ch)) => Err(ParseError::with_location(
                 format!("unknown symbol '{}'", ch),
@@ -188,26 +218,43 @@ impl<'a> Parser<'a> {
 
         let then_branch = self.parse_block()?;
 
-        let else_branch = if self.current == Some(TokenKind::Else) {
-            self.advance();
-            self.eat(TokenKind::Colon)?;
-
-            if self.current == Some(TokenKind::If) {
-                let nested_if = self.parse_if_expr()?;
-                Some(Box::new(Block { stmts: vec![nested_if] }))
-            } else {
-                let else_block = self.parse_block()?;
-                Some(Box::new(else_block))
-            }
-        } else {
-            None
-        };
+        let else_branch = self.parse_else_or_elif()?;
 
         Ok(Expr::If {
             condition,
             then_branch: Box::new(then_branch),
             else_branch,
         })
+    }
+
+    fn parse_else_or_elif(&mut self) -> Result<Option<Box<Block>>, ParseError> {
+        if self.current == Some(TokenKind::Elif) {
+            self.advance();
+            // elif cond: body desugars to else { if cond: body ... }
+            let elif_condition = Box::new(self.parse_expr()?);
+            self.eat(TokenKind::Colon)?;
+            let elif_body = self.parse_block()?;
+            let rest = self.parse_else_or_elif()?;
+            Ok(Some(Box::new(Block {
+                stmts: vec![Expr::If {
+                    condition: elif_condition,
+                    then_branch: Box::new(elif_body),
+                    else_branch: rest,
+                }]
+            })))
+        } else if self.current == Some(TokenKind::Else) {
+            self.advance();
+            self.eat(TokenKind::Colon)?;
+            if self.current == Some(TokenKind::If) {
+                let nested_if = self.parse_if_expr()?;
+                Ok(Some(Box::new(Block { stmts: vec![nested_if] })))
+            } else {
+                let else_block = self.parse_block()?;
+                Ok(Some(Box::new(else_block)))
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     fn parse_while_expr(&mut self) -> Result<Expr, ParseError> {
@@ -233,18 +280,30 @@ impl<'a> Parser<'a> {
             return Err(ParseError::new("expected variable name after 'for'"));
         };
 
-        self.eat(TokenKind::Equal)?;
-
-        let iterable = Box::new(self.parse_expr()?);
-        self.eat(TokenKind::Colon)?;
-
-        let body = self.parse_block()?;
-
-        Ok(Expr::For {
-            variable,
-            iterable,
-            body: Box::new(body),
-        })
+        if self.current == Some(TokenKind::In) {
+            self.advance();
+            let start = Box::new(self.parse_expr()?);
+            self.eat(TokenKind::DotDot)?;
+            let end = Box::new(self.parse_expr()?);
+            self.eat(TokenKind::Colon)?;
+            let body = self.parse_block()?;
+            Ok(Expr::ForRange {
+                variable,
+                start,
+                end,
+                body: Box::new(body),
+            })
+        } else {
+            self.eat(TokenKind::Equal)?;
+            let iterable = Box::new(self.parse_expr()?);
+            self.eat(TokenKind::Colon)?;
+            let body = self.parse_block()?;
+            Ok(Expr::For {
+                variable,
+                iterable,
+                body: Box::new(body),
+            })
+        }
     }
 
     fn parse_break_expr(&mut self) -> Result<Expr, ParseError> {
@@ -298,6 +357,10 @@ impl<'a> Parser<'a> {
     pub fn parse_program(&mut self, profile: String, name: String) -> Result<Program, ParseError> {
         let mut functions = Vec::new();
         let mut globals = Vec::new();
+        let mut structs = Vec::new();
+        let mut enums = Vec::new();
+        let mut type_aliases = Vec::new();
+        let mut impls = Vec::new();
 
         while self.current != Some(TokenKind::Eof) {
             while self.current == Some(TokenKind::Newline) {
@@ -310,8 +373,12 @@ impl<'a> Parser<'a> {
 
             match self.current.clone() {
                 Some(TokenKind::Import) => globals.push(self.parse_import_stmt()?),
+                Some(TokenKind::Struct) => structs.push(self.parse_struct_def()?),
+                Some(TokenKind::Enum) => enums.push(self.parse_enum_def()?),
+                Some(TokenKind::Type) => type_aliases.push(self.parse_type_alias()?),
                 Some(TokenKind::Fn) => functions.push(self.parse_function()?),
                 Some(TokenKind::Extern) => functions.push(self.parse_extern_function()?),
+                Some(TokenKind::Impl) => impls.push(self.parse_impl_def()?),
                 Some(TokenKind::Let)
                 | Some(TokenKind::Const)
                 | Some(TokenKind::Identifier(_))
@@ -319,6 +386,7 @@ impl<'a> Parser<'a> {
                 | Some(TokenKind::FloatLiteral(_))
                 | Some(TokenKind::BoolLiteral(_))
                 | Some(TokenKind::LParen)
+                | Some(TokenKind::LBracket)
                 | Some(TokenKind::Plus)
                 | Some(TokenKind::Minus)
                 | Some(TokenKind::Not)
@@ -328,6 +396,7 @@ impl<'a> Parser<'a> {
                 | Some(TokenKind::If)
                 | Some(TokenKind::While)
                 | Some(TokenKind::For)
+                | Some(TokenKind::Match)
                 | Some(TokenKind::Return)
                 | Some(TokenKind::EqualEqual)
                 | Some(TokenKind::FString(_)) => {
@@ -340,10 +409,10 @@ impl<'a> Parser<'a> {
                         self.lexer.column,
                     ));
                 }
-                Some(tok) => {
+                Some(_tok) => {
                     return Err(ParseError::new(format!(
                         "expected define of the function or expression, but found {:?} (line={}, col={})",
-                        tok,
+                        _tok,
                         self.lexer.line,
                         self.lexer.column
                     )));
@@ -355,6 +424,10 @@ impl<'a> Parser<'a> {
         Ok(Program {
             globals,
             functions,
+            structs,
+            enums,
+            type_aliases,
+            impls,
             profile,
             name,
         })
@@ -368,25 +441,31 @@ impl<'a> Parser<'a> {
         }
 
         match self.current {
-            Some(TokenKind::Else) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
+            Some(TokenKind::Else) | Some(TokenKind::Elif) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
                 return Ok(Block { stmts });
             }
             _ => {}
         }
 
+        let block_indent = self.current_col;
+
         loop {
             while self.current == Some(TokenKind::Newline) {
                 self.advance();
                 match self.current {
-                    Some(TokenKind::Else) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
+                    Some(TokenKind::Else) | Some(TokenKind::Elif) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
                         return Ok(Block { stmts });
                     }
                     _ => {}
                 }
             }
 
+            if self.current_col < block_indent {
+                break;
+            }
+
             match self.current {
-                Some(TokenKind::Else) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => break,
+                Some(TokenKind::Else) | Some(TokenKind::Elif) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => break,
                 None => break,
                 _ => {}
             }
@@ -513,6 +592,114 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_struct_def(&mut self) -> Result<StructDef, ParseError> {
+        self.advance(); // consume 'struct'
+        let name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
+            self.advance();
+            n
+        } else {
+            return Err(ParseError::new("expected name of the struct"));
+        };
+        self.eat(TokenKind::Colon)?;
+        let block = self.parse_block()?;
+        let mut fields = Vec::new();
+        for expr in block.stmts {
+            if let Expr::Let { name, typ, .. } = expr {
+                let field_type = typ.unwrap_or_else(|| "i32".to_string());
+                fields.push(StructField { name, typ: field_type });
+            }
+        }
+        Ok(StructDef { name, fields })
+    }
+
+    fn parse_enum_def(&mut self) -> Result<EnumDef, ParseError> {
+        self.advance(); // consume 'enum'
+        let name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
+            self.advance();
+            n
+        } else {
+            return Err(ParseError::new("expected name of the enum"));
+        };
+        self.eat(TokenKind::Colon)?;
+        let block = self.parse_block()?;
+        let mut variants = Vec::new();
+        for expr in block.stmts {
+            if let Expr::Identifier(vname) = expr {
+                variants.push(EnumVariant { name: vname, fields: Vec::new() });
+            } else if let Expr::Call { func, args } = expr {
+                let fields: Vec<String> = args.into_iter().map(|a| {
+                    if let Expr::Identifier(n) = a { n } else { "value".to_string() }
+                }).collect();
+                variants.push(EnumVariant { name: func, fields });
+            }
+        }
+        Ok(EnumDef { name, variants })
+    }
+
+    fn parse_type_alias(&mut self) -> Result<TypeAlias, ParseError> {
+        self.advance(); // consume 'type'
+        let name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
+            self.advance();
+            n
+        } else {
+            return Err(ParseError::new("expected name for type alias"));
+        };
+        self.eat(TokenKind::Equal)?;
+        let value = if let Some(TokenKind::Identifier(v)) = self.current.clone() {
+            self.advance();
+            v
+        } else {
+            return Err(ParseError::new("expected type value for type alias"));
+        };
+        Ok(TypeAlias { name, value })
+    }
+
+    fn parse_impl_def(&mut self) -> Result<ImplDef, ParseError> {
+        self.advance(); // consume 'impl'
+        let struct_name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
+            self.advance();
+            n
+        } else {
+            return Err(ParseError::new("expected struct name for impl block"));
+        };
+        self.eat(TokenKind::Colon)?;
+
+        // Skip newlines
+        while self.current == Some(TokenKind::Newline) {
+            self.advance();
+        }
+
+        let mut methods = Vec::new();
+        let block_indent = self.current_col;
+
+        loop {
+            // Skip newlines between methods
+            while self.current == Some(TokenKind::Newline) {
+                self.advance();
+            }
+
+            // Check if we've gone back out (less indentation)
+            if self.current_col < block_indent {
+                break;
+            }
+
+            // Check for EOF or top-level keywords
+            match self.current {
+                Some(TokenKind::Eof) | None => break,
+                _ => {}
+            }
+
+            // Each method starts with 'fn'
+            if self.current == Some(TokenKind::Fn) {
+                methods.push(self.parse_function()?);
+            } else {
+                break;
+            }
+        }
+
+        Ok(ImplDef { struct_name, methods })
+    }
+
     fn parse_binary(&mut self, mut left: Expr, min_prec: i32) -> Result<Expr, ParseError> {
         loop {
             let op_opt = self.current.clone();
@@ -581,6 +768,72 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
+    fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+        self.eat(TokenKind::Match)?;
+        let expr = Box::new(self.parse_expr()?);
+        self.eat(TokenKind::LCurly)?;
+        let mut arms = Vec::new();
+        loop {
+            while self.current == Some(TokenKind::Newline) {
+                self.advance();
+            }
+            if self.current == Some(TokenKind::RCurly) {
+                break;
+            }
+            let pattern = match self.current.clone() {
+                Some(TokenKind::IntLiteral(n)) => {
+                    self.advance();
+                    MatchPattern::Int(n)
+                }
+                Some(TokenKind::Identifier(ref name)) if name == "_" => {
+                    self.advance();
+                    MatchPattern::Wildcard
+                }
+                Some(TokenKind::Identifier(ref name)) => {
+                    let variant_name = name.clone();
+                    self.advance();
+                    let mut bindings = Vec::new();
+                    if self.current == Some(TokenKind::LParen) {
+                        self.advance();
+                        while self.current != Some(TokenKind::RParen) {
+                            if let Some(TokenKind::Identifier(b)) = self.current.clone() {
+                                self.advance();
+                                bindings.push(b);
+                            } else {
+                                break;
+                            }
+                            if self.current == Some(TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.eat(TokenKind::RParen)?;
+                    }
+                    MatchPattern::Variant { name: variant_name, bindings }
+                }
+                _ => break,
+            };
+            self.eat(TokenKind::Colon)?;
+            let body = Box::new(self.parse_expr()?);
+            arms.push(MatchArm { pattern, body });
+            if self.current == Some(TokenKind::Comma) {
+                self.advance();
+            }
+            while self.current == Some(TokenKind::Newline) {
+                self.advance();
+            }
+            if self.current == Some(TokenKind::RCurly) {
+                break;
+            }
+        }
+        self.eat(TokenKind::RCurly)?;
+        if arms.is_empty() {
+            return Err(ParseError::new("match must have at least one arm"));
+        }
+        Ok(Expr::Match { expr, arms })
+    }
+
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         while self.current == Some(TokenKind::Newline) {
             self.advance();
@@ -590,10 +843,16 @@ impl<'a> Parser<'a> {
             Some(TokenKind::If) => self.parse_if_expr(),
             Some(TokenKind::While) => self.parse_while_expr(),
             Some(TokenKind::For) => self.parse_for_expr(),
+            Some(TokenKind::Match) => self.parse_match_expr(),
             Some(TokenKind::Break) => self.parse_break_expr(),
             Some(TokenKind::Continue) => self.parse_continue_expr(),
             Some(TokenKind::Else) => Err(ParseError::with_location(
                 "syntax error: 'else' without 'if'",
+                self.lexer.line,
+                self.lexer.column,
+            )),
+            Some(TokenKind::Elif) => Err(ParseError::with_location(
+                "syntax error: 'elif' without 'if'",
                 self.lexer.line,
                 self.lexer.column,
             )),
@@ -645,11 +904,38 @@ impl<'a> Parser<'a> {
                     Ok(Expr::Return(value))
                 }
             }
-            Some(tok) => {
+            Some(_tok) => {
                 let mut left = self.parse_primary()?;
 
                 if let Expr::Identifier(name) = &left {
                     match self.current.clone() {
+                        Some(TokenKind::DoubleColon) => {
+                            let enum_name = name.clone();
+                            self.advance();
+                            let variant_name = if let Some(TokenKind::Identifier(v)) = self.current.clone() {
+                                self.advance();
+                                v
+                            } else {
+                                return Err(ParseError::new(format!(
+                                    "expected variant name after '::' (line={}, col={})",
+                                    self.lexer.line, self.lexer.column
+                                )));
+                            };
+                            let mut args = Vec::new();
+                            if self.current == Some(TokenKind::LParen) {
+                                self.advance();
+                                while self.current != Some(TokenKind::RParen) {
+                                    args.push(self.parse_expr()?);
+                                    if self.current == Some(TokenKind::Comma) {
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                self.eat(TokenKind::RParen)?;
+                            }
+                            left = Expr::EnumLiteral { enum_name, variant_name, args };
+                        }
                         Some(TokenKind::Equal) => {
                             self.advance();
                             let value = Box::new(self.parse_expr()?);
@@ -657,6 +943,97 @@ impl<'a> Parser<'a> {
                                 name: name.clone(),
                                 value,
                             };
+                        }
+                        Some(TokenKind::PlusEqual) => {
+                            self.advance();
+                            let rhs = self.parse_expr()?;
+                            left = Expr::Assign {
+                                name: name.clone(),
+                                value: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier(name.clone())),
+                                    BinOp::Add,
+                                    Box::new(rhs),
+                                )),
+                            };
+                        }
+                        Some(TokenKind::MinusEqual) => {
+                            self.advance();
+                            let rhs = self.parse_expr()?;
+                            left = Expr::Assign {
+                                name: name.clone(),
+                                value: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier(name.clone())),
+                                    BinOp::Sub,
+                                    Box::new(rhs),
+                                )),
+                            };
+                        }
+                        Some(TokenKind::StarEqual) => {
+                            self.advance();
+                            let rhs = self.parse_expr()?;
+                            left = Expr::Assign {
+                                name: name.clone(),
+                                value: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier(name.clone())),
+                                    BinOp::Mul,
+                                    Box::new(rhs),
+                                )),
+                            };
+                        }
+                        Some(TokenKind::SlashEqual) => {
+                            self.advance();
+                            let rhs = self.parse_expr()?;
+                            left = Expr::Assign {
+                                name: name.clone(),
+                                value: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier(name.clone())),
+                                    BinOp::Div,
+                                    Box::new(rhs),
+                                )),
+                            };
+                        }
+                        Some(TokenKind::PercentEqual) => {
+                            self.advance();
+                            let rhs = self.parse_expr()?;
+                            left = Expr::Assign {
+                                name: name.clone(),
+                                value: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier(name.clone())),
+                                    BinOp::DivMod,
+                                    Box::new(rhs),
+                                )),
+                            };
+                        }
+                        Some(TokenKind::StarStarEqual) => {
+                            self.advance();
+                            let rhs = self.parse_expr()?;
+                            left = Expr::Assign {
+                                name: name.clone(),
+                                value: Box::new(Expr::Binary(
+                                    Box::new(Expr::Identifier(name.clone())),
+                                    BinOp::Pow,
+                                    Box::new(rhs),
+                                )),
+                            };
+                        }
+                        Some(TokenKind::LBracket) => {
+                            self.advance();
+                            let index = self.parse_expr()?;
+                            self.eat(TokenKind::RBracket)?;
+                            if self.current == Some(TokenKind::Equal) {
+                                self.advance();
+                                let value = self.parse_expr()?;
+                                left = Expr::AssignIndex {
+                                    name: name.clone(),
+                                    index: Box::new(index),
+                                    value: Box::new(value),
+                                };
+                            } else {
+                                left = Expr::Index {
+                                    target: Box::new(left),
+                                    index: Box::new(index),
+                                };
+                            }
                         }
                         Some(TokenKind::LParen) => {
                             self.advance();
@@ -675,38 +1052,104 @@ impl<'a> Parser<'a> {
                                 args,
                             };
                         }
+                        Some(TokenKind::LCurly) => {
+                            self.advance();
+                            let mut fields = Vec::new();
+                            loop {
+                                while self.current == Some(TokenKind::Newline) {
+                                    self.advance();
+                                }
+                                if self.current == Some(TokenKind::RCurly) {
+                                    break;
+                                }
+                                if let Some(TokenKind::Identifier(fname)) = self.current.clone() {
+                                    self.advance();
+                                    self.eat(TokenKind::Colon)?;
+                                    let fvalue = self.parse_expr()?;
+                                    fields.push((fname, fvalue));
+                                    if self.current == Some(TokenKind::Comma) {
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            self.eat(TokenKind::RCurly)?;
+                            left = Expr::StructLiteral {
+                                name: name.clone(),
+                                fields,
+                            };
+                        }
                         _ => {}
                     }
                 }
 
-                // Method call syntax: receiver.method(args)
+                // Field access / method call / tuple access: receiver.field or receiver.method(args) or tup.0
                 while self.current == Some(TokenKind::Dot) {
                     self.advance();
-                    let method = if let Some(TokenKind::Identifier(m)) = self.current.clone() {
-                        self.advance();
-                        m
-                    } else {
-                        return Err(ParseError::new(format!(
-                            "expected method name after '.' (line={}, col={})",
-                            self.lexer.line, self.lexer.column
-                        )));
-                    };
-                    let mut args = vec![left];
-                    if self.current == Some(TokenKind::LParen) {
-                        self.advance();
-                        while self.current != Some(TokenKind::RParen) {
-                            args.push(self.parse_expr()?);
-                            if self.current == Some(TokenKind::Comma) {
+                    match self.current.clone() {
+                        Some(TokenKind::IntLiteral(n)) => {
+                            self.advance();
+                            left = Expr::TupleAccess {
+                                target: Box::new(left),
+                                index: n as usize,
+                            };
+                        }
+                        Some(TokenKind::Identifier(field)) => {
+                            self.advance();
+                            if self.current == Some(TokenKind::LParen) {
+                                // Method call: receiver.method(args)
+                                let mut args = vec![left];
                                 self.advance();
+                                while self.current != Some(TokenKind::RParen) {
+                                    args.push(self.parse_expr()?);
+                                    if self.current == Some(TokenKind::Comma) {
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                self.eat(TokenKind::RParen)?;
+                                left = Expr::Call {
+                                    func: field,
+                                    args,
+                                };
+                            } else if self.current == Some(TokenKind::Equal) {
+                                // Field assignment: receiver.field = expr
+                                self.advance();
+                                let value = Box::new(self.parse_expr()?);
+                                left = Expr::FieldAssign {
+                                    target: Box::new(left),
+                                    field,
+                                    value,
+                                };
                             } else {
-                                break;
+                                // Field access: receiver.field
+                                left = Expr::FieldAccess {
+                                    target: Box::new(left),
+                                    field,
+                                };
                             }
                         }
-                        self.eat(TokenKind::RParen)?;
+                        _ => {
+                            return Err(ParseError::new(format!(
+                                "expected field name or tuple index after '.' (line={}, col={})",
+                                self.lexer.line, self.lexer.column
+                            )));
+                        }
                     }
-                    left = Expr::Call {
-                        func: method,
-                        args,
+                }
+
+                // Indexing syntax: expr[index]
+                while self.current == Some(TokenKind::LBracket) {
+                    self.advance();
+                    let index = self.parse_expr()?;
+                    self.eat(TokenKind::RBracket)?;
+                    left = Expr::Index {
+                        target: Box::new(left),
+                        index: Box::new(index),
                     };
                 }
 

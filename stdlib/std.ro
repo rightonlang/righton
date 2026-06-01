@@ -25,35 +25,41 @@ fn is_empty(value):
 
 // String manipulation methods (receiver.method syntax)
 fn contains(s, sub):
-    return false
+    return __rt_contains(s, sub)
 
 fn starts_with(s, prefix):
-    return false
+    return __rt_starts_with(s, prefix)
 
 fn ends_with(s, suffix):
-    return false
+    return __rt_ends_with(s, suffix)
 
 fn substr(s, start, length):
-    return s
+    return __rt_substr(s, start, length)
 
 fn trim(s):
-    return s
+    return __rt_trim(s)
 
 fn to_uppercase(s):
-    return s
+    return __rt_to_uppercase(s)
 
 fn to_lowercase(s):
-    return s
+    return __rt_to_lowercase(s)
 
 fn to_string(v):
     return v
 
+fn str_repeat(s, count):
+    return __rt_str_repeat(s, count)
+
 // Parsing
 fn to_int(s):
-    return 0
+    return __rt_to_int(s)
 
 fn to_float(s):
-    return 0.0
+    return __rt_to_float(s)
+
+fn to_hex(n):
+    return __rt_to_hex(n)
 
 // Math methods (receiver.method syntax)
 fn abs(n):
@@ -61,14 +67,29 @@ fn abs(n):
         return -n
     return n
 
+fn abs_f(n):
+    return __rt_abs(n)
+
 fn floor(n):
-    return n
+    return __rt_floor(n)
 
 fn ceil(n):
-    return n
+    return __rt_ceil(n)
 
 fn round(n):
-    return n
+    return __rt_round(n)
+
+fn sqrt(n):
+    return __rt_sqrt(n)
+
+fn sin(n):
+    return __rt_sin(n)
+
+fn cos(n):
+    return __rt_cos(n)
+
+fn tan(n):
+    return __rt_tan(n)
 
 fn min(a, b):
     if a < b:
@@ -86,10 +107,23 @@ fn pow(base, exp):
 
 // I/O
 fn read_line():
-    return ""
+    return __rt_read_line()
 
 fn read_int():
-    return 0
+    return to_int(read_line())
 
 fn read_float():
-    return 0.0
+    return to_float(read_line())
+
+// List functions
+fn list_len(lst):
+    return __rt_list_len(lst)
+
+fn list_push(lst, val):
+    return __rt_list_push(lst, val)
+
+fn list_pop(lst):
+    return __rt_list_pop(lst)
+
+fn list_free(lst):
+    __rt_free(lst)

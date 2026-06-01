@@ -31,11 +31,47 @@ struct Cli {
 
     #[clap(long)]
     codegen_level: Option<String>,
+
+    #[clap(long)]
+    emit_ir: bool,
+}
+
+fn format_error(source: &str, err: &str, is_parse: bool) -> String {
+    if !is_parse {
+        return format!("Error: {}", err);
+    }
+    if let Some(cap) = err.split("(line=").nth(1) {
+        if let Some(line_str) = cap.split(", ").next() {
+            if let Ok(line_num) = line_str.parse::<usize>() {
+                if let Some(col_str) = cap.split("col=").nth(1) {
+                    if let Some(col_str) = col_str.split(')').next() {
+                        if let Ok(col_num) = col_str.parse::<usize>() {
+                            let err_msg = err.split("(line=").next().unwrap_or(err).trim();
+                            let source_line = source.lines().nth(line_num - 1).unwrap_or("");
+                            let mut result = format!("Error: {} (line={}, col={})\n", err_msg, line_num, col_num);
+                            if !source_line.is_empty() {
+                                result.push_str(&format!("  {}\n", source_line));
+                            let indent = col_num.min(source_line.len());
+                            let caret = if indent > 0 {
+                                format!("  {:indent$}^---\n", "", indent = indent)
+                            } else {
+                                format!("  ^---\n")
+                            };
+                            result.push_str(&caret);
+                            }
+                            return result;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    format!("Error: {}", err)
 }
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("Error: {}", err);
+        eprintln!("{}", err);
         std::process::exit(1);
     }
 }
@@ -73,20 +109,22 @@ fn run() -> Result<(), String> {
 
     let code = fs::read_to_string(&input_path).map_err(|e| e.to_string())?;
     let name = Path::new(&input_path)
-        .file_stem()    
+        .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| "failed to derive input file stem".to_string())?;
 
-    let mut lexer = Lexer::new(&*code);
+    let mut lexer = Lexer::new(&code);
     let mut parser = parser::Parser::new(&mut lexer);
     let program = parser
         .parse_program(profile, name.to_string())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format_error(&code, &e.to_string(), true))?;
 
     let mut r#gen = LLVMTextGen::new();
-    let ir = r#gen.generate(&program).map_err(|e| e.to_string())?;
+    let ir = r#gen.generate(&program).map_err(|e| format_error(&code, &e.to_string(), false))?;
 
-    println!("LLVM Ir:\n{}", ir);
+    if cli.emit_ir {
+        println!("{}", ir);
+    }
 
     if output_path.ends_with(".o") || output_path.ends_with(".obj") {
         unsafe {
@@ -103,14 +141,10 @@ fn run() -> Result<(), String> {
         };
         llvm::compile_object(&options, ir.clone(), output_path.clone(), name.to_string())
             .map_err(|e| e.to_string())?;
+        eprintln!("object saved to {}", output_path);
     } else {
         fs::write(&output_path, &ir).map_err(|e| e.to_string())?;
-    }
-
-    if output_path.ends_with(".o") || output_path.ends_with(".obj") {
-        println!("object saved to {}", output_path);
-    } else {
-        println!("LLVM Ir saved to {}", output_path);
+        eprintln!("LLVM IR saved to {}", output_path);
     }
 
     Ok(())

@@ -34,6 +34,39 @@ pub enum UnaryOp {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Import(String),
+    List(Vec<Expr>),
+    Index {
+        target: Box<Expr>,
+        index: Box<Expr>,
+    },
+    AssignIndex {
+        name: String,
+        index: Box<Expr>,
+        value: Box<Expr>,
+    },
+    FieldAccess {
+        target: Box<Expr>,
+        field: String,
+    },
+    FieldAssign {
+        target: Box<Expr>,
+        field: String,
+        value: Box<Expr>,
+    },
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
+    Tuple(Vec<Expr>),
+    TupleAccess {
+        target: Box<Expr>,
+        index: usize,
+    },
+    EnumLiteral {
+        enum_name: String,
+        variant_name: String,
+        args: Vec<Expr>,
+    },
     StringLiteral(String),
     Identifier(String),
     Borrow {
@@ -74,8 +107,46 @@ pub enum Expr {
         iterable: Box<Expr>,
         body: Box<Block>,
     },
+    ForRange {
+        variable: String,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        body: Box<Block>,
+    },
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub enum MatchPattern {
+    Int(i32),
+    Variant {
+        name: String,
+        bindings: Vec<String>,
+    },
+    Wildcard,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,12 +164,40 @@ pub struct Block {
 }
 
 #[derive(Debug, Clone)]
+pub struct StructField {
+    pub name: String,
+    pub typ: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<StructField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeAlias {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImplDef {
+    pub struct_name: String,
+    pub methods: Vec<FunctionDef>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Program {
     // compiler needed
     pub globals: Vec<Expr>,
     pub functions: Vec<FunctionDef>,
+    pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
+    pub type_aliases: Vec<TypeAlias>,
+    pub impls: Vec<ImplDef>,
 
     // compiler additional
     pub profile: String,
-    pub name: String
+    pub name: String,
 }

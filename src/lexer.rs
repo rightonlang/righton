@@ -40,10 +40,29 @@ pub enum TokenKind {
     Mut,
     Import,
     Extern,
+    Struct,
     While,
     For,
     Break,
     Continue,
+    Elif,
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    StarStarEqual,
+    SlashEqual,
+    PercentEqual,
+    In,
+    DotDot,
+    LBracket,
+    RBracket,
+    LCurly,
+    RCurly,
+    Match,
+    Enum,
+    Type,
+    Impl,
+    DoubleColon,
     Invalid(char),
 }
 
@@ -91,6 +110,23 @@ impl Lexer {
             }
         }
         c
+    }
+
+    fn read_string_char(&mut self) -> Option<char> {
+        let c = self.next()?;
+        if c == '\\' {
+            match self.next().unwrap_or('\\') {
+                'n' => Some('\n'),
+                't' => Some('\t'),
+                'r' => Some('\r'),
+                '0' => Some('\0'),
+                '\\' => Some('\\'),
+                '"' => Some('"'),
+                other => Some(other),
+            }
+        } else {
+            Some(c)
+        }
     }
 
     fn skip_unnecessary(&mut self) {
@@ -142,20 +178,42 @@ impl Lexer {
         };
 
         match ch {
-            ':' => Token {
-                kind: TokenKind::Colon,
-                line: self.line,
-                column: start_col,
-            },
+            ':' => {
+                if self.peek() == Some(':') {
+                    self.next();
+                    Token {
+                        kind: TokenKind::DoubleColon,
+                        line: self.line,
+                        column: start_col,
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Colon,
+                        line: self.line,
+                        column: start_col,
+                    }
+                }
+            }
             ',' => Token {
                 kind: TokenKind::Comma,
                 line: self.line,
                 column: start_col,
             },
-            '.' => Token {
-                kind: TokenKind::Dot,
-                line: self.line,
-                column: start_col,
+            '.' => {
+                if self.peek() == Some('.') {
+                    self.next();
+                    Token {
+                        kind: TokenKind::DotDot,
+                        line: self.line,
+                        column: start_col,
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Dot,
+                        line: self.line,
+                        column: start_col,
+                    }
+                }
             },
             '&' => Token {
                 kind: TokenKind::Ampersand,
@@ -172,6 +230,26 @@ impl Lexer {
                 line: self.line,
                 column: start_col,
             },
+            '[' => Token {
+                kind: TokenKind::LBracket,
+                line: self.line,
+                column: start_col,
+            },
+            ']' => Token {
+                kind: TokenKind::RBracket,
+                line: self.line,
+                column: start_col,
+            },
+            '{' => Token {
+                kind: TokenKind::LCurly,
+                line: self.line,
+                column: start_col,
+            },
+            '}' => Token {
+                kind: TokenKind::RCurly,
+                line: self.line,
+                column: start_col,
+            },
             '\n' => Token {
                 kind: TokenKind::Newline,
                 line: self.line,
@@ -183,7 +261,7 @@ impl Lexer {
                     if self.peek() == Some('"') {
                         self.next();
                         let mut s = String::new();
-                        while let Some(_) = self.peek() {
+                        while self.peek().is_some() {
                             if self.peek() == Some('"')
                                 && self.src.get(self.pos + 1) == Some(&'"')
                                 && self.src.get(self.pos + 2) == Some(&'"')
@@ -193,8 +271,9 @@ impl Lexer {
                                 self.next();
                                 break;
                             }
-                            let c = self.next().unwrap();
-                            s.push(c);
+                            if let Some(ch) = self.read_string_char() {
+                                s.push(ch);
+                            }
                         }
                         return Token {
                             kind: TokenKind::MultilineString(s),
@@ -202,16 +281,28 @@ impl Lexer {
                             column: start_col,
                         };
                     } else {
+                        return Token {
+                            kind: TokenKind::StringLiteral(String::new()),
+                            line: self.line,
+                            column: start_col,
+                        };
                     }
                 }
 
                 let mut s = String::new();
-                while let Some(c) = self.peek() {
-                    self.next();
-                    if c == '"' {
-                        break;
+                loop {
+                    match self.peek() {
+                        Some('"') => {
+                            self.next();
+                            break;
+                        }
+                        Some(_) => {
+                            if let Some(ch) = self.read_string_char() {
+                                s.push(ch);
+                            }
+                        }
+                        None => break,
                     }
-                    s.push(c);
                 }
                 Token {
                     kind: TokenKind::StringLiteral(s),
@@ -220,23 +311,61 @@ impl Lexer {
                 }
             }
 
-            '+' => Token {
-                kind: TokenKind::Plus,
-                line: self.line,
-                column: start_col,
-            },
-            '-' => Token {
-                kind: TokenKind::Minus,
-                line: self.line,
-                column: start_col,
-            },
-            '*' => {
-                if self.peek() == Some('*') {
+            '+' => {
+                if self.peek() == Some('=') {
                     self.next();
                     Token {
-                        kind: TokenKind::StarStar,
+                        kind: TokenKind::PlusEqual,
                         line: self.line,
                         column: start_col,
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Plus,
+                        line: self.line,
+                        column: start_col,
+                    }
+                }
+            }
+            '-' => {
+                if self.peek() == Some('=') {
+                    self.next();
+                    Token {
+                        kind: TokenKind::MinusEqual,
+                        line: self.line,
+                        column: start_col,
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Minus,
+                        line: self.line,
+                        column: start_col,
+                    }
+                }
+            },
+            '*' => {
+                if self.peek() == Some('=') {
+                    self.next();
+                    Token {
+                        kind: TokenKind::StarEqual,
+                        line: self.line,
+                        column: start_col,
+                    }
+                } else if self.peek() == Some('*') {
+                    self.next();
+                    if self.peek() == Some('=') {
+                        self.next();
+                        Token {
+                            kind: TokenKind::StarStarEqual,
+                            line: self.line,
+                            column: start_col,
+                        }
+                    } else {
+                        Token {
+                            kind: TokenKind::StarStar,
+                            line: self.line,
+                            column: start_col,
+                        }
                     }
                 } else {
                     Token {
@@ -246,15 +375,37 @@ impl Lexer {
                     }
                 }
             }
-            '/' => Token {
-                kind: TokenKind::Slash,
-                line: self.line,
-                column: start_col,
-            },
-            '%' => Token {
-                kind: TokenKind::Percent,
-                line: self.line,
-                column: start_col,
+            '/' => {
+                if self.peek() == Some('=') {
+                    self.next();
+                    Token {
+                        kind: TokenKind::SlashEqual,
+                        line: self.line,
+                        column: start_col,
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Slash,
+                        line: self.line,
+                        column: start_col,
+                    }
+                }
+            }
+            '%' => {
+                if self.peek() == Some('=') {
+                    self.next();
+                    Token {
+                        kind: TokenKind::PercentEqual,
+                        line: self.line,
+                        column: start_col,
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Percent,
+                        line: self.line,
+                        column: start_col,
+                    }
+                }
             },
 
             //strs
@@ -265,7 +416,7 @@ impl Lexer {
                         self.next();
                         self.next();
                         let mut s = String::new();
-                        while let Some(_) = self.peek() {
+                        while self.peek().is_some() {
                             if self.peek() == Some('"')
                                 && self.src.get(self.pos + 1) == Some(&'"')
                                 && self.src.get(self.pos + 2) == Some(&'"')
@@ -275,8 +426,9 @@ impl Lexer {
                                 self.next();
                                 break;
                             }
-                            let c = self.next().unwrap();
-                            s.push(c);
+                            if let Some(ch) = self.read_string_char() {
+                                s.push(ch);
+                            }
                         }
                         Token {
                             kind: TokenKind::FString(s),
@@ -285,12 +437,19 @@ impl Lexer {
                         }
                     } else {
                         let mut s = String::new();
-                        while let Some(c) = self.peek() {
-                            self.next();
-                            if c == '"' {
-                                break;
+                        loop {
+                            match self.peek() {
+                                Some('"') => {
+                                    self.next();
+                                    break;
+                                }
+                                Some(_) => {
+                                    if let Some(ch) = self.read_string_char() {
+                                        s.push(ch);
+                                    }
+                                }
+                                None => break,
                             }
-                            s.push(c);
                         }
                         Token {
                             kind: TokenKind::FString(s),
@@ -414,11 +573,18 @@ impl Lexer {
                     "not" => TokenKind::Not,
                     "mut" => TokenKind::Mut,
                     "import" => TokenKind::Import,
+                    "impl" => TokenKind::Impl,
                     "extern" => TokenKind::Extern,
                     "while" => TokenKind::While,
                     "for" => TokenKind::For,
                     "break" => TokenKind::Break,
                     "continue" => TokenKind::Continue,
+                    "elif" => TokenKind::Elif,
+                    "in" => TokenKind::In,
+                    "match" => TokenKind::Match,
+                    "struct" => TokenKind::Struct,
+                    "enum" => TokenKind::Enum,
+                    "type" => TokenKind::Type,
                     _ => TokenKind::Identifier(ident),
                 };
                 Token {
@@ -468,6 +634,11 @@ impl Lexer {
                 }
             }
         }
+    }
+
+    pub fn peek_indent(&mut self) -> usize {
+        self.skip_unnecessary();
+        self.column
     }
 }
 

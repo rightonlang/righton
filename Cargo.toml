@@ -1,11 +1,13 @@
 [package]
 name = "righton"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] }
-llvm-sys = { version = "201.0.0", features = ["prefer-static"] }
+llvm-sys = { version = "201.0.0", features = ["force-dynamic"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [lib]
 name = "righton"
@@ -14,3 +16,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "righton"
 path = "src/main.rs"
+
+[[bin]]
+name = "righton-lsp"
+path = "src/lsp/main.rs"
