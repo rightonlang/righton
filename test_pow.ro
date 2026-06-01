@@ -1,9 +1,0 @@
-import std
-
-fn main():
-    let x: i32 = 42
-    print_int(x)
-    let s: string = "hello"
-    print(s)
-    let f: float = 3.14
-    print_float(f)

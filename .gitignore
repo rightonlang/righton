@@ -19,6 +19,7 @@
 /arms_cache
 example*
 test*
+tmp*
 !tests
 !*test.rs
 !examples.md
