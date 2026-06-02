@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  build:
+    name: Build and test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          profile: minimal
+          override: true
+
+      - name: Cache Cargo registry, git index, and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Visual Studio Build Tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --locale en-US" --yes
+
+      - name: Install LLVM 20.1 on Linux and Windows
+        if: runner.os != 'macOS'
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20.1.0"
+
+      - name: Install LLVM 20.1 on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install llvm@20
+          echo "PATH=$(brew --prefix llvm@20)/bin:$PATH" >> $GITHUB_ENV
+          echo "LLVM_SYS_201_PREFIX=$(brew --prefix llvm@20)" >> $GITHUB_ENV
+
+      - name: Build on macOS
+        if: runner.os == 'macOS'
+        env:
+          LLVM_SYS_201_PREFIX: ${{ env.LLVM_SYS_201_PREFIX }}
+        run: cargo build --verbose
+
+      - name: Build on non-macOS
+        if: runner.os != 'macOS'
+        run: cargo build --verbose
+
+      - name: Run tests on macOS
+        if: runner.os == 'macOS'
+        env:
+          LLVM_SYS_201_PREFIX: ${{ env.LLVM_SYS_201_PREFIX }}
+        run: cargo test --verbose
+
+      - name: Run tests on non-macOS
+        if: runner.os != 'macOS'
+        run: cargo test --verbose
+
+      - name: Upload compiler artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: righton-${{ matrix.os }}
+          path: target/debug/righton*
+
+      - name: Upload LSP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: righton-lsp-${{ matrix.os }}
+          path: target/debug/righton-lsp*
