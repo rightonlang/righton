@@ -1,6 +1,6 @@
 # Righton
 
-**Righton** is a compiled programming language with Python-like syntax.  
+**Righton** is a compiled programming language with simple syntax.  
 It uses LLVM to generate machine code, making programs fast and efficient.
 
 <img src="/pictures/frog%20righton.png" height="150">
