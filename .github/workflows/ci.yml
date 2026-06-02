@@ -11,7 +11,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [stable]
     steps:
       - name: Checkout repository
@@ -35,17 +35,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install Visual Studio Build Tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --locale en-US" --yes
-
       - name: Install LLVM 20.1 on Linux and Windows
         if: runner.os != 'macOS'
-        uses: KyleMayes/install-llvm-action@v2
+        uses: ZhongRuoyu/setup-llvm@v0
         with:
-          version: "20.1.0"
+          llvm-version: "20"
+
+      - name: Install libxml2 on Windows
+        if: runner.os == 'windows'
+        run: |
+          vcpkg install libxml2:x64-windows-static
+          vcpkg integrate install
+          vcpkg list
+                
+      - name: Export vcpkg environment variables
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIB" >> $GITHUB_ENV
+          echo "LIBPATH=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIBPATH" >> $GITHUB_ENV
+          echo "INCLUDE=$VCPKG_ROOT/installed/x64-windows-static/include;$INCLUDE" >> $GITHUB_ENV
 
       - name: Install LLVM 20.1 on macOS
         if: runner.os == 'macOS'
