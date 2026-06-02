@@ -55,7 +55,9 @@ jobs:
           echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIB" >> $GITHUB_ENV
           echo "LIBPATH=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIBPATH" >> $GITHUB_ENV
           echo "INCLUDE=$VCPKG_ROOT/installed/x64-windows-static/include;$INCLUDE" >> $GITHUB_ENV
-
+          # Добавьте это:
+          echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/lib" >> $GITHUB_ENV
+          
       - name: Install LLVM 20.1 on macOS
         if: runner.os == 'macOS'
         run: |
