@@ -1,5 +1,7 @@
 # Righton
 
+![righton frog](/pictures/frog%20righton.png)
+
 **Righton** is a compiled programming language with Python-like syntax.  
 It uses LLVM to generate machine code, making programs fast and efficient.
 
