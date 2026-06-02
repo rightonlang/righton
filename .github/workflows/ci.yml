@@ -44,7 +44,7 @@ jobs:
       - name: Install libxml2 on Windows
         if: runner.os == 'windows'
         run: |
-          vcpkg install libxml2:x64-windows-static
+          vcpkg install libxml2[iconv,zlib]:x64-windows-static
           vcpkg integrate install
           vcpkg list
                 
@@ -54,9 +54,15 @@ jobs:
         run: |
           echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIB" >> $GITHUB_ENV
           echo "LIBPATH=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIBPATH" >> $GITHUB_ENV
+          echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/debug/lib;$LIB" >> $GITHUB_ENV
+          echo "LIBPATH=$VCPKG_ROOT/installed/x64-windows-static/debug/lib;$LIBPATH" >> $GITHUB_ENV
           echo "INCLUDE=$VCPKG_ROOT/installed/x64-windows-static/include;$INCLUDE" >> $GITHUB_ENV
           # Добавьте это:
           echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/lib" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/debug/lib" >> $GITHUB_ENV
+          cp $VCPKG_ROOT/installed/x64-windows-static/lib/libxml2.lib $VCPKG_ROOT/installed/x64-windows-static/lib/libxml2s.lib
+          cp $VCPKG_ROOT/installed/x64-windows-static/debug/lib/libxml2.lib $VCPKG_ROOT/installed/x64-windows-static/debug/lib/libxml2s.lib
+
           
       - name: Install LLVM 20.1 on macOS
         if: runner.os == 'macOS'
