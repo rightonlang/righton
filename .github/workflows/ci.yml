@@ -60,6 +60,8 @@ jobs:
           # Добавьте это:
           echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/lib" >> $GITHUB_ENV
           echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/debug/lib" >> $GITHUB_ENV
+          ls $VCPKG_ROOT/installed/x64-windows-static/debug/lib/
+          ls $VCPKG_ROOT/installed/x64-windows-static/lib/
           cp $VCPKG_ROOT/installed/x64-windows-static/lib/libxml2.lib $VCPKG_ROOT/installed/x64-windows-static/lib/libxml2s.lib
           cp $VCPKG_ROOT/installed/x64-windows-static/debug/lib/libxml2.lib $VCPKG_ROOT/installed/x64-windows-static/debug/lib/libxml2s.lib
 
