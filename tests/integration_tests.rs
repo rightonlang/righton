@@ -378,6 +378,7 @@ mod tests {
         let _ = fs::remove_file(input);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_cli_object_file_emission() {
         let input = temp_file("ron");
@@ -2124,6 +2125,7 @@ mod tests {
         let _ = fs::remove_file(output);
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_stdlib_str_repeat() {
         let input = temp_file("ron");
@@ -2140,7 +2142,7 @@ mod tests {
     // ========================
     // EMIT IR CLI FLAG TEST
     // ========================
-
+    #[cfg(unix)]
     #[test]
     fn test_emit_ir_flag_works() {
         let input = temp_file("ron");
