@@ -22,7 +22,20 @@
   "activationEvents": [
     "onLanguage:righton"
   ],
-  "main": "./src/extension.js",
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./tsconfig.json",
+    "watch": "tsc -w -p ./tsconfig.json",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0"
+  },
   "contributes": {
     "languages": [
       {

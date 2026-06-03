@@ -23,6 +23,7 @@
 
 # Built Visual Studio Code Extensions
 *.vsix
+node_modules/
 
 # windows
 /vcpkg.json
