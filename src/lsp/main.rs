@@ -1,5 +1,6 @@
 use righton::lexer::Lexer;
 use righton::parser::Parser;
+use righton::type_checker::TypeChecker;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
@@ -30,12 +31,13 @@ fn read_message() -> Option<String> {
         if handle.read_line(&mut line).ok()? == 0 {
             return None;
         }
-        let line = line.trim();
+        let line = line.trim_end();
         if line.is_empty() {
             break;
         }
-        if let Some(len) = line.strip_prefix("Content-Length: ") {
-            content_length = len.parse().ok();
+        let lowercase = line.to_ascii_lowercase();
+        if let Some(len) = lowercase.strip_prefix("content-length: ") {
+            content_length = len.trim().parse().ok();
         }
     }
     let len = content_length?;
@@ -43,7 +45,9 @@ fn read_message() -> Option<String> {
     let mut read = 0;
     while read < len {
         let n = handle.read(&mut buf[read..]).ok()?;
-        if n == 0 { return None; }
+        if n == 0 {
+            return None;
+        }
         read += n;
     }
     String::from_utf8(buf).ok()
@@ -77,36 +81,56 @@ fn run_diagnostics(_uri: &str, text: &str) -> Vec<Value> {
     let mut lexer = Lexer::new(text);
     let mut parser = Parser::new(&mut lexer);
     match parser.parse_program("debug".to_string(), "lsp".to_string()) {
-        Ok(_) => {}
-        Err(e) => {
-            let msg = e.to_string();
+        Ok(program) => {
+            let mut checker = TypeChecker::new();
+            if let Err(err) = checker.check_program(&program, false) {
+                let line = err.line.unwrap_or(1).saturating_sub(1);
+                let col = 0;
+                diagnostics.push(make_diagnostic(err.to_string(), line, col, 1));
+            }
+        }
+        Err(err) => {
+            let msg = err.to_string();
             let (line, col) = extract_line_col(&msg);
-            let diag = json!({
-                "range": {
-                    "start": {"line": line.saturating_sub(1), "character": col},
-                    "end": {"line": line.saturating_sub(1), "character": col + 1}
-                },
-                "severity": 1,
-                "message": msg,
-                "source": "righton"
-            });
-            diagnostics.push(diag);
+            diagnostics.push(make_diagnostic(msg, line.saturating_sub(1), col, 1));
         }
     }
     diagnostics
 }
 
+fn make_diagnostic(message: String, line: usize, character: usize, severity: i64) -> Value {
+    json!({
+        "range": {
+            "start": {"line": line, "character": character},
+            "end": {"line": line, "character": character + 1}
+        },
+        "severity": severity,
+        "message": message,
+        "source": "righton"
+    })
+}
+
 fn extract_line_col(msg: &str) -> (usize, usize) {
-    if let Some(cap) = msg.split("(line=").nth(1) {
-        if let Some(line_str) = cap.split(", ").next() {
-            if let Ok(line) = line_str.parse::<usize>() {
-                if let Some(col_str) = cap.split("col=").nth(1) {
-                    if let Some(col) = col_str.split(')').next() {
-                        if let Ok(c) = col.parse::<usize>() {
-                            return (line, c);
-                        }
-                    }
-                }
+    if let Some(start) = msg.find("(line=") {
+        let tail = &msg[start + 6..];
+        let parts: Vec<&str> = tail.split(&[',', ')'][..]).collect();
+        let line = parts
+            .get(0)
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let col = msg
+            .split("col=")
+            .nth(1)
+            .and_then(|s| s.split(&[')', ','][..]).next())
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        return (line, col);
+    }
+    if let Some(start) = msg.find("line ") {
+        let tail = &msg[start + 5..];
+        if let Some((line_str, _)) = tail.split_once(':') {
+            if let Ok(line) = line_str.trim().parse::<usize>() {
+                return (line, 0);
             }
         }
     }
@@ -192,18 +216,38 @@ fn make_hover(text: &str, line: usize, character: usize) -> Option<Value> {
 }
 
 fn get_word_at(line: &str, character: usize) -> Option<String> {
-    let bytes = line.as_bytes();
-    if character >= bytes.len() { return None; }
     let mut start = character;
     let mut end = character;
-    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
-        start -= 1;
+    while start > 0 {
+        if let Some(ch) = line[..start].chars().rev().next() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                start = start.saturating_sub(ch.len_utf8());
+                continue;
+            }
+        }
+        break;
     }
-    while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
-        end += 1;
+    while let Some(ch) = line[end..].chars().next() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            end += ch.len_utf8();
+            continue;
+        }
+        break;
     }
     if start == end { return None; }
     Some(line[start..end].to_string())
+}
+
+fn get_word_prefix(line: &str, character: usize) -> String {
+    let mut start = character;
+    while start > 0 {
+        let prev = line[..start].chars().rev().next();
+        match prev {
+            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' => start -= ch.len_utf8(),
+            _ => break,
+        }
+    }
+    line[start..character].to_string()
 }
 
 struct DocumentStore {
@@ -314,12 +358,17 @@ fn run_server() {
                 }).unwrap_or_default();
                 let text = store.get(&uri_str).unwrap_or("");
                 let line = params.pointer("/position/line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let character = params.pointer("/position/character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let source_line = text.lines().nth(line).unwrap_or("");
+                let prefix = get_word_prefix(source_line, character);
                 let mut items = Vec::new();
                 items.extend(keyword_completions());
                 items.extend(type_completions());
                 items.extend(stdlib_completions());
                 items.extend(context_keywords(source_line));
+                if !prefix.is_empty() {
+                    items.retain(|item| item["label"].as_str().map(|label| label.starts_with(&prefix)).unwrap_or(true));
+                }
                 let result = json!({"isIncomplete": false, "items": items});
                 if !is_notification {
                     send_message(&make_response(id, result));

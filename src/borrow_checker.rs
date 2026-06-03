@@ -108,7 +108,7 @@ impl BorrowChecker {
         match stmt {
             Expr::Let { name, value, .. } => self.handle_let(name, value),
             Expr::Assign { name, value } => self.handle_assign(name, value),
-            Expr::Return(inner) => self.handle_return(inner),
+            Expr::Return(inner, _) => self.handle_return(inner),
             Expr::If { .. } => Ok(()),
             _ => Ok(()),
         }
@@ -116,21 +116,21 @@ impl BorrowChecker {
 
     fn visit_expr(&mut self, expr: &Expr) -> Result<(), BorrowCheckError> {
         match expr {
-            Expr::Import(_) => Ok(()),
-            Expr::Identifier(name) => self.ensure_valid(name),
-            Expr::Borrow { name, mutable } => self.check_borrow(name, *mutable),
-            Expr::Binary(left, _, right) => {
+            Expr::Import(_, _) => Ok(()),
+            Expr::Identifier(name, _) => self.ensure_valid(name),
+            Expr::Borrow { name, mutable, .. } => self.check_borrow(name, *mutable),
+            Expr::Binary(left, _, right, _) => {
                 self.visit_expr(left)?;
                 self.visit_expr(right)
             }
-            Expr::Unary(_, inner) | Expr::Return(inner) => self.visit_expr(inner),
+            Expr::Unary(_, inner, _) | Expr::Return(inner, _) => self.visit_expr(inner),
             Expr::Call { args, .. } => {
                 for arg in args {
                     self.visit_expr(arg)?;
                 }
                 Ok(())
             }
-            Expr::FString(_) => Ok(()),
+            Expr::FString(_, _) => Ok(()),
             Expr::List(items) => {
                 for item in items {
                     self.visit_expr(item)?;
@@ -201,9 +201,9 @@ impl BorrowChecker {
 
     fn handle_let(&mut self, name: &str, value: &Expr) -> Result<(), BorrowCheckError> {
         match value {
-            Expr::Borrow { name: src, mutable } => self.bind_borrow(name, src, *mutable),
-            Expr::Identifier(src) => self.bind_from_identifier(name, src, true),
-            Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => {
+            Expr::Borrow { name: src, mutable, .. } => self.bind_borrow(name, src, *mutable),
+            Expr::Identifier(src, _) => self.bind_from_identifier(name, src, true),
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => {
                 self.replace_binding(name, Binding::new(BindingKind::OwnedPtr));
                 Ok(())
             }
@@ -235,9 +235,9 @@ impl BorrowChecker {
         }
 
         match value {
-            Expr::Borrow { name: src, mutable } => self.bind_borrow(name, src, *mutable),
-            Expr::Identifier(src) => self.bind_from_identifier(name, src, true),
-            Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => {
+            Expr::Borrow { name: src, mutable, .. } => self.bind_borrow(name, src, *mutable),
+            Expr::Identifier(src, _) => self.bind_from_identifier(name, src, true),
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => {
                 self.replace_binding(name, Binding::new(BindingKind::OwnedPtr));
                 Ok(())
             }
@@ -250,7 +250,7 @@ impl BorrowChecker {
             Expr::Borrow { .. } => Err(BorrowCheckError::new(
                 "borrowed value cannot escape the current scope",
             )),
-            Expr::Identifier(name) => {
+            Expr::Identifier(name, _) => {
                 let binding = self
                     .bindings
                     .get(name)

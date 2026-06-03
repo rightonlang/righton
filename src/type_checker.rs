@@ -212,7 +212,7 @@ impl TypeChecker {
     fn register_globals(&mut self, globals: &[Expr]) -> TypeResult<()> {
         for global in globals {
             let _ = match global {
-                Expr::Import(_) => {}
+                Expr::Import(_, _) => {}
             Expr::Let { name, typ, value, is_const: _ } => {
                 let value_type = self.infer_expr(value)?;
                 let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
@@ -295,7 +295,7 @@ impl TypeChecker {
         }
 
         for expr in &func.body {
-            if let Expr::Return(inner) = expr {
+            if let Expr::Return(inner, _) = expr {
                 return Ok(self.infer_expr_without_env(inner));
             }
             if let Expr::If { then_branch, else_branch, .. } = expr {
@@ -316,7 +316,7 @@ impl TypeChecker {
 
     fn find_return_in_block(&self, block: &Block) -> Type {
         for expr in &block.stmts {
-            if let Expr::Return(inner) = expr {
+            if let Expr::Return(inner, _) = expr {
                 return self.infer_expr_without_env(inner);
             }
             if let Expr::If { then_branch, else_branch, .. } = expr {
@@ -383,7 +383,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
     fn infer_expr(&mut self, expr: &Expr) -> TypeResult<Type> {
         match expr {
-            Expr::Import(_) => Ok(Type::Void),
+            Expr::Import(_, _) => Ok(Type::Void),
             Expr::List(items) => {
                 if items.is_empty() {
                     return Ok(Type::Void);
@@ -423,16 +423,16 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 }
                 Ok(Type::Void)
             }
-            Expr::Literal(Literal::Int(_)) => Ok(Type::I32),
-            Expr::Literal(Literal::Float(_)) => Ok(Type::F64),
-            Expr::Literal(Literal::Bool(_)) => Ok(Type::Bool),
-            Expr::Literal(Literal::Str(_)) => Ok(Type::String),
-            Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => Ok(Type::String),
+            Expr::Literal(Literal::Int(_), _) => Ok(Type::I32),
+            Expr::Literal(Literal::Float(_), _) => Ok(Type::F64),
+            Expr::Literal(Literal::Bool(_), _) => Ok(Type::Bool),
+            Expr::Literal(Literal::Str(_), _) => Ok(Type::String),
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => Ok(Type::String),
             Expr::Borrow { .. } => Ok(Type::String),
-            Expr::Identifier(name) => Ok(self.env.get(name)),
+            Expr::Identifier(name, _) => Ok(self.env.get(name)),
             Expr::Call { func, args } => self.check_call(func, args),
-            Expr::Binary(l, op, r) => self.check_binary_op(l, op, r),
-            Expr::Unary(op, inner) => self.check_unary_op(op, inner),
+            Expr::Binary(l, op, r, _) => self.check_binary_op(l, op, r),
+            Expr::Unary(op, inner, _) => self.check_unary_op(op, inner),
             Expr::If { condition, then_branch, else_branch } => {
                 let cond_type = self.infer_expr(condition)?;
                 if cond_type != Type::Bool && cond_type != Type::I32 {
@@ -492,7 +492,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
                 Ok(Type::Void)
             }
-            Expr::Return(inner) => self.infer_expr(inner),
+            Expr::Return(inner, _) => self.infer_expr(inner),
             Expr::While { condition, body } => {
                 let cond_type = self.infer_expr(condition)?;
                 if cond_type != Type::Bool && cond_type != Type::I32 {
@@ -635,7 +635,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 }
                 Err(TypeError::new(format!("unknown struct: {}", name)))
             }
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements, _) => {
                 let mut types = Vec::new();
                 for elem in elements {
                     types.push(self.infer_expr(elem)?);
@@ -677,11 +677,11 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
     fn infer_expr_without_env(&self, expr: &Expr) -> Type {
         match expr {
-            Expr::Literal(Literal::Int(_)) => Type::I32,
-            Expr::Literal(Literal::Float(_)) => Type::F64,
-            Expr::Literal(Literal::Bool(_)) => Type::Bool,
-            Expr::Literal(Literal::Str(_)) => Type::String,
-            Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => Type::String,
+            Expr::Literal(Literal::Int(_), _) => Type::I32,
+            Expr::Literal(Literal::Float(_), _) => Type::F64,
+            Expr::Literal(Literal::Bool(_), _) => Type::Bool,
+            Expr::Literal(Literal::Str(_), _) => Type::String,
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => Type::String,
             Expr::List(_) => Type::String,
             Expr::Index { .. } => Type::I32,
             Expr::Match { arms, .. } => {
@@ -701,7 +701,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 }
             }
             Expr::EnumLiteral { enum_name, .. } => Type::Enum(enum_name.clone()),
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements, _) => {
                 if let Some(first) = elements.first() {
                     self.infer_expr_without_env(first)
                 } else {
@@ -715,7 +715,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
     fn infer_block_type(&self, block: &Block) -> Type {
         for expr in &block.stmts {
-            if let Expr::Return(inner) = expr {
+            if let Expr::Return(inner, _) = expr {
                 return self.infer_expr_without_env(inner);
             }
         }
@@ -873,10 +873,10 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
     fn check_expr(&mut self, expr: &Expr) -> TypeResult<Type> {
         match expr {
-            Expr::Import(_) => Ok(Type::Void),
-            Expr::Literal(_) => Ok(Type::Void),
-            Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => Ok(Type::Void),
-            Expr::Identifier(_) => Ok(Type::Void),
+            Expr::Import(_, _) => Ok(Type::Void),
+            Expr::Literal(_, _) => Ok(Type::Void),
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => Ok(Type::Void),
+            Expr::Identifier(_, _) => Ok(Type::Void),
             Expr::Borrow { .. } => Ok(Type::Void),
             Expr::List(items) => {
                 for item in items {
@@ -902,11 +902,11 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 self.check_call(func, args)?;
                 Ok(Type::Void)
             }
-            Expr::Binary(l, op, r) => {
+            Expr::Binary(l, op, r, _) => {
                 self.check_binary_op(l, op, r)?;
                 Ok(Type::Void)
             }
-            Expr::Unary(op, inner) => {
+            Expr::Unary(op, inner, _) => {
                 self.check_unary_op(op, inner)?;
                 Ok(Type::Void)
             }
@@ -978,7 +978,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
                 Ok(Type::Void)
             }
-            Expr::Return(inner) => {
+            Expr::Return(inner, _) => {
                 self.infer_expr(inner)?;
                 Ok(Type::Void)
             }
@@ -1038,7 +1038,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 }
                 Ok(Type::Void)
             }
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements, _) => {
                 for elem in elements {
                     self.check_expr(elem)?;
                 }

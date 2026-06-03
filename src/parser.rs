@@ -52,6 +52,10 @@ impl<'a> Parser<'a> {
         self.current = Some(tok.kind);
     }
 
+    fn current_span(&self) -> SourceSpan {
+        SourceSpan::new(self.lexer.line, self.current_col)
+    }
+
     fn eat(&mut self, expected: TokenKind) -> Result<(), ParseError> {
         if self.current == Some(expected.clone()) {
             self.advance();
@@ -106,6 +110,7 @@ impl<'a> Parser<'a> {
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         match self.current.clone() {
             Some(TokenKind::Plus) | Some(TokenKind::Minus) => {
+                let span = self.current_span();
                 let op = self.current.clone();
                 self.advance();
                 let expr = self.parse_primary()?;
@@ -114,9 +119,10 @@ impl<'a> Parser<'a> {
                     Some(TokenKind::Minus) => UnaryOp::Neg,
                     _ => unreachable!(),
                 };
-                Ok(Expr::Unary(unop, Box::new(expr)))
+                Ok(Expr::Unary(unop, Box::new(expr), span))
             }
             Some(TokenKind::Ampersand) => {
+                let span = self.current_span();
                 self.advance();
                 let mutable = if self.current == Some(TokenKind::Mut) {
                     self.advance();
@@ -132,30 +138,36 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::new("expected name after borrow operator"));
                 };
 
-                Ok(Expr::Borrow { name, mutable })
+                Ok(Expr::Borrow { name, mutable, span })
             }
             Some(TokenKind::Not) => {
+                let span = self.current_span();
                 self.advance();
                 let expr = self.parse_primary()?;
-                Ok(Expr::Unary(UnaryOp::Not, Box::new(expr)))
+                Ok(Expr::Unary(UnaryOp::Not, Box::new(expr), span))
             }
             Some(TokenKind::IntLiteral(n)) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(Expr::Literal(Literal::Int(n)))
+                Ok(Expr::Literal(Literal::Int(n), span))
             }
             Some(TokenKind::FloatLiteral(n)) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(Expr::Literal(Literal::Float(n)))
+                Ok(Expr::Literal(Literal::Float(n), span))
             }
             Some(TokenKind::BoolLiteral(b)) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(Expr::Literal(Literal::Bool(b)))
+                Ok(Expr::Literal(Literal::Bool(b), span))
             }
             Some(TokenKind::Identifier(name)) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(Expr::Identifier(name))
+                Ok(Expr::Identifier(name, span))
             }
             Some(TokenKind::LParen) => {
+                let span = self.current_span();
                 self.advance();
                 let first = self.parse_expr()?;
                 if self.current == Some(TokenKind::Comma) {
@@ -165,23 +177,26 @@ impl<'a> Parser<'a> {
                         elements.push(self.parse_expr()?);
                     }
                     self.eat(TokenKind::RParen)?;
-                    Ok(Expr::Tuple(elements))
+                    Ok(Expr::Tuple(elements, span))
                 } else {
                     self.eat(TokenKind::RParen)?;
                     Ok(first)
                 }
             }
             Some(TokenKind::StringLiteral(s)) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(Expr::StringLiteral(s))
+                Ok(Expr::StringLiteral(s, span))
             }
             Some(TokenKind::MultilineString(s)) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(Expr::MultilineString(s))
+                Ok(Expr::MultilineString(s, span))
             }
             Some(TokenKind::FString(s)) => {
+                let span = self.current_span();
                 self.advance();
-                Ok(self.parse_fstring(&s))
+                Ok(self.parse_fstring(&s, span))
             }
             Some(TokenKind::LBracket) => {
                 self.advance();
@@ -317,6 +332,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_import_stmt(&mut self) -> Result<Expr, ParseError> {
+        let span = self.current_span();
         self.eat(TokenKind::Import)?;
 
         let spec = match self.current.clone() {
@@ -351,7 +367,7 @@ impl<'a> Parser<'a> {
             }
         };
 
-        Ok(Expr::Import(spec))
+        Ok(Expr::Import(spec, span))
     }
 
     pub fn parse_program(&mut self, profile: String, name: String) -> Result<Program, ParseError> {
@@ -624,11 +640,11 @@ impl<'a> Parser<'a> {
         let block = self.parse_block()?;
         let mut variants = Vec::new();
         for expr in block.stmts {
-            if let Expr::Identifier(vname) = expr {
+            if let Expr::Identifier(vname, _) = expr {
                 variants.push(EnumVariant { name: vname, fields: Vec::new() });
             } else if let Expr::Call { func, args } = expr {
                 let fields: Vec<String> = args.into_iter().map(|a| {
-                    if let Expr::Identifier(n) = a { n } else { "value".to_string() }
+                    if let Expr::Identifier(n, _) = a { n } else { "value".to_string() }
                 }).collect();
                 variants.push(EnumVariant { name: func, fields });
             }
@@ -741,6 +757,7 @@ impl<'a> Parser<'a> {
             };
 
             let mut right = self.parse_primary()?;
+            let span = left.span();
             let next_min_prec = if Self::is_right_associative(&op_opt) {
                 prec
             } else {
@@ -763,7 +780,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            left = Expr::Binary(Box::new(left), binop, Box::new(right));
+            left = Expr::Binary(Box::new(left), binop, Box::new(right), span);
         }
         Ok(left)
     }
@@ -896,18 +913,19 @@ impl<'a> Parser<'a> {
                 })
             }
             Some(TokenKind::Return) => {
+                let span = self.current_span();
                 self.advance();
                 if self.current == Some(TokenKind::Newline) || self.current == Some(TokenKind::Eof) {
-                    Ok(Expr::Return(Box::new(Expr::Literal(Literal::Int(0)))))
+                    Ok(Expr::Return(Box::new(Expr::Literal(Literal::Int(0), span)), span))
                 } else {
                     let value = Box::new(self.parse_expr()?);
-                    Ok(Expr::Return(value))
+                    Ok(Expr::Return(value, span))
                 }
             }
             Some(_tok) => {
                 let mut left = self.parse_primary()?;
 
-                if let Expr::Identifier(name) = &left {
+                if let Expr::Identifier(name, _) = &left {
                     match self.current.clone() {
                         Some(TokenKind::DoubleColon) => {
                             let enum_name = name.clone();
@@ -950,9 +968,10 @@ impl<'a> Parser<'a> {
                             left = Expr::Assign {
                                 name: name.clone(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone())),
+                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
                                     BinOp::Add,
                                     Box::new(rhs),
+                                    SourceSpan::unknown(),
                                 )),
                             };
                         }
@@ -962,9 +981,10 @@ impl<'a> Parser<'a> {
                             left = Expr::Assign {
                                 name: name.clone(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone())),
+                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
                                     BinOp::Sub,
                                     Box::new(rhs),
+                                    SourceSpan::unknown(),
                                 )),
                             };
                         }
@@ -974,9 +994,10 @@ impl<'a> Parser<'a> {
                             left = Expr::Assign {
                                 name: name.clone(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone())),
+                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
                                     BinOp::Mul,
                                     Box::new(rhs),
+                                    SourceSpan::unknown(),
                                 )),
                             };
                         }
@@ -986,9 +1007,10 @@ impl<'a> Parser<'a> {
                             left = Expr::Assign {
                                 name: name.clone(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone())),
+                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
                                     BinOp::Div,
                                     Box::new(rhs),
+                                    SourceSpan::unknown(),
                                 )),
                             };
                         }
@@ -998,9 +1020,10 @@ impl<'a> Parser<'a> {
                             left = Expr::Assign {
                                 name: name.clone(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone())),
+                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
                                     BinOp::DivMod,
                                     Box::new(rhs),
+                                    SourceSpan::unknown(),
                                 )),
                             };
                         }
@@ -1010,9 +1033,10 @@ impl<'a> Parser<'a> {
                             left = Expr::Assign {
                                 name: name.clone(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone())),
+                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
                                     BinOp::Pow,
                                     Box::new(rhs),
+                                    SourceSpan::unknown(),
                                 )),
                             };
                         }
@@ -1162,7 +1186,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_fstring(&self, s: &str) -> Expr {
+    fn parse_fstring(&self, s: &str, span: SourceSpan) -> Expr {
         let mut elements = Vec::new();
         let mut buf = String::new();
         let mut chars = s.chars().peekable();
@@ -1170,7 +1194,7 @@ impl<'a> Parser<'a> {
         while let Some(c) = chars.next() {
             if c == '{' {
                 if !buf.is_empty() {
-                    elements.push(Expr::StringLiteral(buf.clone()));
+                    elements.push(Expr::StringLiteral(buf.clone(), SourceSpan::unknown()));
                     buf.clear();
                 }
                 let mut var_name = String::new();
@@ -1181,17 +1205,17 @@ impl<'a> Parser<'a> {
                     }
                     var_name.push(ch);
                 }
-                elements.push(Expr::Identifier(var_name));
+                elements.push(Expr::Identifier(var_name, SourceSpan::unknown()));
             } else {
                 buf.push(c);
             }
         }
 
         if !buf.is_empty() {
-            elements.push(Expr::StringLiteral(buf));
+            elements.push(Expr::StringLiteral(buf, SourceSpan::unknown()));
         }
 
-        Expr::FString(elements)
+        Expr::FString(elements, span)
     }
 }
 
@@ -1216,7 +1240,7 @@ mod tests {
         let program = parse("42");
         assert_eq!(program.globals.len(), 1);
         match extract_global_expr(&program, 0) {
-            Expr::Literal(Literal::Int(n)) => assert_eq!(*n, 42),
+            Expr::Literal(Literal::Int(n), _) => assert_eq!(*n, 42),
             _ => panic!("expected integer literal"),
         }
     }
@@ -1225,7 +1249,7 @@ mod tests {
     fn test_parse_identifier() {
         let program = parse("x");
         match extract_global_expr(&program, 0) {
-            Expr::Identifier(name) => assert_eq!(name, "x"),
+            Expr::Identifier(name, _) => assert_eq!(name, "x"),
             _ => panic!("expected identifier"),
         }
     }
@@ -1234,7 +1258,7 @@ mod tests {
     fn test_parse_binary_operations() {
         let program = parse("a + b * c");
         match extract_global_expr(&program, 0) {
-            Expr::Binary(_, op, _) => match op {
+            Expr::Binary(_, op, _, _) => match op {
                 BinOp::Add => assert!(true),
                 _ => panic!("expected Add operator"),
             },
@@ -1246,7 +1270,7 @@ mod tests {
     fn test_parse_unary_operations() {
         let program = parse("-x");
         match extract_global_expr(&program, 0) {
-            Expr::Unary(op, _) => match op {
+            Expr::Unary(op, _, _) => match op {
                 UnaryOp::Neg => assert!(true),
                 _ => panic!("expected Neg operator"),
             },
@@ -1316,7 +1340,7 @@ mod tests {
     fn test_parse_import_statement() {
         let program = parse("import utils.math");
         match extract_global_expr(&program, 0) {
-            Expr::Import(spec) => assert_eq!(spec, "utils/math"),
+            Expr::Import(spec, _) => assert_eq!(spec, "utils/math"),
             _ => panic!("expected import statement"),
         }
     }
@@ -1361,9 +1385,9 @@ mod tests {
     fn test_parse_return_statement() {
         let program = parse("return 42");
         match extract_global_expr(&program, 0) {
-            Expr::Return(expr) => {
+            Expr::Return(expr, _) => {
                 match &**expr {
-                    Expr::Literal(Literal::Int(n)) => assert_eq!(*n, 42),
+                    Expr::Literal(Literal::Int(n), _) => assert_eq!(*n, 42),
                     _ => panic!("expected integer literal in return"),
                 }
             }
@@ -1375,7 +1399,7 @@ mod tests {
     fn test_parse_string_literal() {
         let program = parse(r#""hello""#);
         match extract_global_expr(&program, 0) {
-            Expr::StringLiteral(s) => assert_eq!(s, "hello"),
+            Expr::StringLiteral(s, _) => assert_eq!(s, "hello"),
             _ => panic!("expected string literal"),
         }
     }
@@ -1385,7 +1409,7 @@ mod tests {
         let program = parse(r#""""line1
 line2""""#);
         match extract_global_expr(&program, 0) {
-            Expr::MultilineString(s) => assert_eq!(s, "line1\nline2"),
+            Expr::MultilineString(s, _) => assert_eq!(s, "line1\nline2"),
             _ => panic!("expected multiline string"),
         }
     }
@@ -1394,14 +1418,14 @@ line2""""#);
     fn test_parse_fstring() {
         let program = parse(r#"f"Hello {name}"#);
         match extract_global_expr(&program, 0) {
-            Expr::FString(elements) => {
+            Expr::FString(elements, _) => {
                 assert_eq!(elements.len(), 2);
                 match &elements[0] {
-                    Expr::StringLiteral(s) => assert_eq!(s, "Hello "),
+                    Expr::StringLiteral(s, _) => assert_eq!(s, "Hello "),
                     _ => panic!("expected string literal element"),
                 }
                 match &elements[1] {
-                    Expr::Identifier(n) => assert_eq!(n, "name"),
+                    Expr::Identifier(n, _) => assert_eq!(n, "name"),
                     _ => panic!("expected identifier element"),
                 }
             }
@@ -1426,7 +1450,7 @@ line2""""#);
     fn test_parse_comparison_operators() {
         let program = parse("a == b");
         match extract_global_expr(&program, 0) {
-            Expr::Binary(_, op, _) => match op {
+            Expr::Binary(_, op, _, _) => match op {
                 BinOp::Eq => assert!(true),
                 _ => panic!("expected Eq operator"),
             },
@@ -1438,8 +1462,8 @@ line2""""#);
     fn test_parse_power_is_right_associative() {
         let program = parse("2 ** 3 ** 2");
         match extract_global_expr(&program, 0) {
-            Expr::Binary(_, BinOp::Pow, rhs) => match &**rhs {
-                Expr::Binary(_, BinOp::Pow, _) => assert!(true),
+            Expr::Binary(_, BinOp::Pow, rhs, _) => match &**rhs {
+                Expr::Binary(_, BinOp::Pow, _, _) => assert!(true),
                 _ => panic!("expected right-associative power"),
             },
             _ => panic!("expected power expression"),
@@ -1450,8 +1474,8 @@ line2""""#);
     fn test_parse_chained_comparison() {
         let program = parse("a < b < c");
         match extract_global_expr(&program, 0) {
-            Expr::Binary(left, BinOp::Lt, _) => match &**left {
-                Expr::Binary(_, BinOp::Lt, _) => assert!(true),
+            Expr::Binary(left, BinOp::Lt, _, _) => match &**left {
+                Expr::Binary(_, BinOp::Lt, _, _) => assert!(true),
                 _ => panic!("expected chained comparison to nest left"),
             },
             _ => panic!("expected comparison expression"),
@@ -1462,8 +1486,8 @@ line2""""#);
     fn test_parse_mixed_numeric_precedence() {
         let program = parse("1 + 2.5 * 3");
         match extract_global_expr(&program, 0) {
-            Expr::Binary(_, BinOp::Add, rhs) => match &**rhs {
-                Expr::Binary(_, BinOp::Mul, _) => assert!(true),
+            Expr::Binary(_, BinOp::Add, rhs, _) => match &**rhs {
+                Expr::Binary(_, BinOp::Mul, _, _) => assert!(true),
                 _ => panic!("expected multiplication to bind tighter than addition"),
             },
             _ => panic!("expected addition expression"),
@@ -1474,13 +1498,13 @@ line2""""#);
     fn test_parse_implicit_multiplication_edge_cases() {
         let program = parse("2x + 3(y + 1)");
         match extract_global_expr(&program, 0) {
-            Expr::Binary(left, BinOp::Add, right) => {
+            Expr::Binary(left, BinOp::Add, right, _) => {
                 match &**left {
-                    Expr::Binary(_, BinOp::Mul, _) => assert!(true),
+                    Expr::Binary(_, BinOp::Mul, _, _) => assert!(true),
                     _ => panic!("expected implicit multiplication on left"),
                 }
                 match &**right {
-                    Expr::Binary(_, BinOp::Mul, _) => assert!(true),
+                    Expr::Binary(_, BinOp::Mul, _, _) => assert!(true),
                     _ => panic!("expected implicit multiplication on right"),
                 }
             }

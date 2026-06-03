@@ -204,7 +204,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
 
         for global in &program.globals {
             match global {
-                Expr::Import(spec) => {
+                Expr::Import(spec, _) => {
                     if self.is_stdlib_module(spec) {
                         self.stdlib_enabled = true;
                     }
@@ -296,11 +296,11 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                     self.collect_calls(arg, calls);
                 }
             }
-            Expr::Binary(l, _, r) => {
+            Expr::Binary(l, _, r, _) => {
                 self.collect_calls(l, calls);
                 self.collect_calls(r, calls);
             }
-            Expr::Unary(_, inner) | Expr::Return(inner) => self.collect_calls(inner, calls),
+            Expr::Unary(_, inner, _) | Expr::Return(inner, _) => self.collect_calls(inner, calls),
             Expr::Let { value, .. } | Expr::Assign { value, .. } => self.collect_calls(value, calls),
             Expr::If { condition, then_branch, else_branch } => {
                 self.collect_calls(condition, calls);
@@ -333,7 +333,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                 }
             }
             Expr::Break | Expr::Continue => {}
-            Expr::FString(elements) => {
+            Expr::FString(elements, _) => {
                 for el in elements {
                     self.collect_calls(el, calls);
                 }
@@ -372,7 +372,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                     self.collect_calls(arg, calls);
                 }
             }
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements, _) => {
                 for elem in elements {
                     self.collect_calls(elem, calls);
                 }
@@ -380,12 +380,12 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
             Expr::TupleAccess { target, .. } => {
                 self.collect_calls(target, calls);
             }
-            Expr::Import(_)
-            | Expr::Identifier(_)
+            Expr::Import(_, _)
+            | Expr::Identifier(_, _)
             | Expr::Borrow { .. }
-            | Expr::StringLiteral(_)
-            | Expr::MultilineString(_)
-            | Expr::Literal(_) => {}
+            | Expr::StringLiteral(_, _)
+            | Expr::MultilineString(_, _)
+            | Expr::Literal(_, _) => {}
         }
     }
 
@@ -515,12 +515,13 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                         .collect(),
                 }
             }
-            Expr::Binary(l, op, r) => Expr::Binary(
+            Expr::Binary(l, op, r, _) => Expr::Binary(
                 Box::new(self.rename_calls(*l, alias_map, function_names)),
                 op,
                 Box::new(self.rename_calls(*r, alias_map, function_names)),
+                SourceSpan::unknown(),
             ),
-            Expr::Unary(op, inner) => Expr::Unary(op, Box::new(self.rename_calls(*inner, alias_map, function_names))),
+            Expr::Unary(op, inner, _) => Expr::Unary(op, Box::new(self.rename_calls(*inner, alias_map, function_names)), SourceSpan::unknown()),
             Expr::Let { name, typ, value, is_const } => Expr::Let {
                 name,
                 typ,
@@ -531,7 +532,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                 name,
                 value: Box::new(self.rename_calls(*value, alias_map, function_names)),
             },
-            Expr::Return(inner) => Expr::Return(Box::new(self.rename_calls(*inner, alias_map, function_names))),
+            Expr::Return(inner, _) => Expr::Return(Box::new(self.rename_calls(*inner, alias_map, function_names)), SourceSpan::unknown()),
             Expr::If { condition, then_branch, else_branch } => Expr::If {
                 condition: Box::new(self.rename_calls(*condition, alias_map, function_names)),
                 then_branch: Box::new(Block {
@@ -549,11 +550,12 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                         .collect(),
                 })),
             },
-            Expr::FString(elements) => Expr::FString(
+            Expr::FString(elements, _) => Expr::FString(
                 elements
                     .into_iter()
                     .map(|el| self.rename_calls(el, alias_map, function_names))
                     .collect(),
+                SourceSpan::unknown(),
             ),
             Expr::While { condition, body } => Expr::While {
                 condition: Box::new(self.rename_calls(*condition, alias_map, function_names)),
@@ -819,7 +821,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
         let mut has_return = false;
 
         for expr in &func.body {
-            if matches!(expr, Expr::Return(_)) {
+            if matches!(expr, Expr::Return(_, _)) {
                 has_return = true;
             }
             self.generate_expr(expr, &func.params, &mut locals, return_type)?;
@@ -891,17 +893,17 @@ writeln!(
         locals: &HashMap<String, (Type, String, bool)>,
     ) -> &'static str {
         match expr {
-            Expr::Import(_) => "void",
-            Expr::Literal(Literal::Int(_)) => "i32",
-            Expr::Literal(Literal::Float(_)) => "double",
-            Expr::Literal(Literal::Bool(_)) => "i32",
-            Expr::Literal(Literal::Str(_)) => "i8*",
-            Expr::StringLiteral(_) | Expr::MultilineString(_) | Expr::FString(_) => "i8*",
+            Expr::Import(_, _) => "void",
+            Expr::Literal(Literal::Int(_), _) => "i32",
+            Expr::Literal(Literal::Float(_), _) => "double",
+            Expr::Literal(Literal::Bool(_), _) => "i32",
+            Expr::Literal(Literal::Str(_), _) => "i8*",
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => "i8*",
             Expr::Borrow { .. } => "i8*",
             Expr::List(_) => "i8*",
             Expr::StructLiteral { .. } => "i8*",
             Expr::EnumLiteral { .. } => "i8*",
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements, _) => {
                 if elements.is_empty() { "void" } else { "i8*" }
             }
             Expr::TupleAccess { target, index } => {
@@ -909,7 +911,7 @@ writeln!(
             }
             Expr::FieldAssign { .. } => "void",
             Expr::FieldAccess { target, field } => {
-                let target_name = if let Expr::Identifier(name) = target.as_ref() {
+                let target_name = if let Expr::Identifier(name, _) = target.as_ref() {
                     if locals.contains_key(name) { name.clone() } else { String::new() }
                 } else { String::new() };
                 if !target_name.is_empty() {
@@ -936,7 +938,7 @@ writeln!(
                     "void"
                 }
             }
-            Expr::Identifier(name) => {
+            Expr::Identifier(name, _) => {
                 if let Some((typ, _, _)) = locals.get(name) {
                     match typ {
                         Type::I32 => "i32",
@@ -963,27 +965,27 @@ writeln!(
                 .builtin_return_type(func)
                 .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
                 .unwrap_or("void"),
-            Expr::Binary(l, op, r) => {
+            Expr::Binary(l, op, r, _) => {
                 let is_comparison = matches!(*op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
                 let is_logical = matches!(*op, BinOp::And | BinOp::Or);
                 if is_comparison || is_logical {
                     return "i32";
                 }
-                if matches!(l.as_ref(), Expr::Literal(Literal::Float(_))) || matches!(r.as_ref(), Expr::Literal(Literal::Float(_))) {
+                if matches!(l.as_ref(), Expr::Literal(Literal::Float(_), _)) || matches!(r.as_ref(), Expr::Literal(Literal::Float(_), _)) {
                     return "double";
                 }
-                if matches!(l.as_ref(), Expr::Literal(Literal::Int(_))) || matches!(r.as_ref(), Expr::Literal(Literal::Int(_))) {
+                if matches!(l.as_ref(), Expr::Literal(Literal::Int(_), _)) || matches!(r.as_ref(), Expr::Literal(Literal::Int(_), _)) {
                     return "i32";
                 }
-                if matches!(l.as_ref(), Expr::Literal(Literal::Bool(_))) || matches!(r.as_ref(), Expr::Literal(Literal::Bool(_))) {
+                if matches!(l.as_ref(), Expr::Literal(Literal::Bool(_), _)) || matches!(r.as_ref(), Expr::Literal(Literal::Bool(_), _)) {
                     return "i32";
                 }
-                if let Expr::Identifier(ln) = l.as_ref() {
+                if let Expr::Identifier(ln, _) = l.as_ref() {
                     if let Some((Type::F64, _, _)) = locals.get(ln) {
                         return "double";
                     }
                 }
-                if let Expr::Identifier(rn) = r.as_ref() {
+                if let Expr::Identifier(rn, _) = r.as_ref() {
                     if let Some((Type::F64, _, _)) = locals.get(rn) {
                         return "double";
                     }
@@ -1004,17 +1006,17 @@ writeln!(
                     "i32"
                 }
             }
-            Expr::Unary(op, inner) => {
+            Expr::Unary(op, inner, _) => {
                 if matches!(op, UnaryOp::Not) {
                     return "i32";
                 }
                 let inner_type = self.infer_expr_type(inner, params, locals);
                 if inner_type == "void" {
-                    if matches!(inner.as_ref(), Expr::Literal(Literal::Float(_))) {
+                    if matches!(inner.as_ref(), Expr::Literal(Literal::Float(_), _)) {
                         "double"
-                    } else if matches!(inner.as_ref(), Expr::Literal(Literal::Bool(_))) {
+                    } else if matches!(inner.as_ref(), Expr::Literal(Literal::Bool(_), _)) {
                         "i32"
-                    } else if matches!(inner.as_ref(), Expr::Literal(Literal::Int(_))) {
+                    } else if matches!(inner.as_ref(), Expr::Literal(Literal::Int(_), _)) {
                         "i32"
                     } else {
                         "i32"
@@ -1062,7 +1064,7 @@ writeln!(
         sigs: &HashMap<String, &'static str>,
     ) -> &'static str {
         for expr in exprs {
-            if let Expr::Return(inner) = expr {
+            if let Expr::Return(inner, _) = expr {
                 return self.infer_expr_type_with_sigs(inner, params, temp_locals, sigs);
             }
             if let Expr::If { then_branch, else_branch, .. } = expr {
@@ -1360,7 +1362,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 match expr {
                     Expr::Call { func, args } => {
                         for (i, arg) in args.iter().enumerate() {
-                            if let Expr::Identifier(n) = arg {
+                            if let Expr::Identifier(n, _) = arg {
                                 if n == param {
                                     if let Some(expected) = pt(func, i) {
                                         if expected == "i8*" {
@@ -1379,7 +1381,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                         }
                         false
                     }
-                    Expr::Return(inner) => check_expr(inner, param, stdlib_enabled, visited, pt),
+                    Expr::Return(inner, _) => check_expr(inner, param, stdlib_enabled, visited, pt),
                     _ => false
                 }
             }
@@ -1402,7 +1404,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
             match expr {
                 Expr::Call { func, args } => {
                     for (i, arg) in args.iter().enumerate() {
-                        if let Expr::Identifier(n) = arg {
+                        if let Expr::Identifier(n, _) = arg {
                             if n == param {
                                 if let Some(expected) = pt(func, i) {
                                     if expected == "i32" {
@@ -1414,7 +1416,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                     }
                     false
                 }
-                Expr::Return(inner) => check_int_context(inner, param, pt),
+                Expr::Return(inner, _) => check_int_context(inner, param, pt),
                 _ => false,
             }
         }
@@ -1427,7 +1429,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
             match expr {
                 Expr::Call { func, args } => {
                     for (i, arg) in args.iter().enumerate() {
-                        if let Expr::Identifier(n) = arg {
+                        if let Expr::Identifier(n, _) = arg {
                             if n == param {
                                 if let Some(expected) = pt(func, i) {
                                     if expected == "double" {
@@ -1439,7 +1441,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                     }
                     false
                 }
-                Expr::Return(inner) => check_float_context(inner, param, pt),
+                Expr::Return(inner, _) => check_float_context(inner, param, pt),
                 _ => false,
             }
         }
@@ -1450,9 +1452,9 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
         // Fourth: check if param is used in binary expressions (comparison/arithmetic) anywhere
         fn param_in_binary(expr: &Expr, param: &str) -> bool {
             match expr {
-                Expr::Binary(l, _, r) => {
-                    if let Expr::Identifier(n) = l.as_ref() { if n == param { return true; } }
-                    if let Expr::Identifier(n) = r.as_ref() { if n == param { return true; } }
+                Expr::Binary(l, _, r, _) => {
+                    if let Expr::Identifier(n, _) = l.as_ref() { if n == param { return true; } }
+                    if let Expr::Identifier(n, _) = r.as_ref() { if n == param { return true; } }
                     param_in_binary(l, param) || param_in_binary(r, param)
                 }
                 Expr::If { condition, then_branch, else_branch } => {
@@ -1474,8 +1476,8 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                         || body.stmts.iter().any(|e| param_in_binary(e, param))
                 }
                 Expr::Call { args, .. } => args.iter().any(|a| param_in_binary(a, param)),
-                Expr::Return(inner) => param_in_binary(inner, param),
-                Expr::Unary(_, inner) => param_in_binary(inner, param),
+                Expr::Return(inner, _) => param_in_binary(inner, param),
+                Expr::Unary(_, inner, _) => param_in_binary(inner, param),
                 Expr::Index { target, index } => param_in_binary(target, param) || param_in_binary(index, param),
                 Expr::AssignIndex { index, value, .. } => param_in_binary(index, param) || param_in_binary(value, param),
                 Expr::List(items) => items.iter().any(|item| param_in_binary(item, param)),
@@ -1500,7 +1502,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
         locals: &mut HashMap<String, (Type, String, bool)>,
         return_ty: &str,
     ) -> CompileResult<bool> {
-        let last_is_return = stmts.iter().last().map_or(false, |s| matches!(s, Expr::Return(_)));
+        let last_is_return = stmts.iter().last().map_or(false, |s| matches!(s, Expr::Return(_, _)));
         for stmt in stmts {
             self.generate_expr(stmt, params, locals, return_ty)?;
         }
@@ -1515,7 +1517,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
         return_ty: &str,
     ) -> CompileResult<()> {
         match expr {
-            Expr::Import(_) => {}
+            Expr::Import(_, _) => {}
 
             Expr::Let {
                 name,
@@ -1663,7 +1665,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 self.emit_asm_call(args, params, locals)?;
             }
 
-Expr::Return(inner) => {
+Expr::Return(inner, _) => {
                 let ty = self.infer_expr_type(inner, params, locals);
                 if ty == "i32" && return_ty == "i32" {
                     let val = self.generate_int_expr(inner, params, locals)?;
@@ -1687,7 +1689,7 @@ Expr::Return(inner) => {
                 }
             }
 
-            Expr::FString(elements) => {
+            Expr::FString(elements, _) => {
                 let ptr = self.next_temp();
                 self.emit_fstring(elements, params, locals, &ptr)?;
                 self.emit_printf_str(&ptr);
@@ -1931,10 +1933,10 @@ Expr::Return(inner) => {
                 }
             }
 
-            Expr::Literal(Literal::Int(_))
-            | Expr::Literal(Literal::Bool(_))
-            | Expr::Literal(Literal::Float(_))
-            | Expr::Unary(_, _) => {
+            Expr::Literal(Literal::Int(_), _)
+            | Expr::Literal(Literal::Bool(_), _)
+            | Expr::Literal(Literal::Float(_), _)
+            | Expr::Unary(_, _, _) => {
                 let inferred = self.infer_expr_type(expr, params, locals);
                 if inferred == "double" {
                     let val = self.generate_float_expr(expr, params, locals)?;
@@ -1945,7 +1947,7 @@ Expr::Return(inner) => {
                 }
             }
 
-            Expr::Binary(l, op, r) => {
+            Expr::Binary(l, op, r, _) => {
                 let left_ty = self.infer_expr_type(l, params, locals);
                 let right_ty = self.infer_expr_type(r, params, locals);
                 let uses_float = left_ty == "double" || right_ty == "double";
@@ -1971,7 +1973,7 @@ Expr::Return(inner) => {
                 }
             }
 
-            Expr::StringLiteral(s) | Expr::MultilineString(s) => {
+            Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
                 let id = self.emit_string_const(s);
                 let ptr = self.next_temp();
                 let len = s.len() + 1;
@@ -2162,7 +2164,7 @@ Expr::Return(inner) => {
                     None => return Err(CompileError::new(format!("unknown variable: {}", name))),
                 };
                 let ptr = self.next_temp();
-                self.generate_ptr_expr(&Expr::Identifier(name.clone()), params, locals, &ptr)?;
+                self.generate_ptr_expr(&Expr::Identifier(name.clone(), SourceSpan::unknown()), params, locals, &ptr)?;
                 let idx = self.generate_int_expr(index, params, locals)?;
                 let elem_off = self.next_temp();
                 writeln!(
@@ -2200,7 +2202,7 @@ Expr::Return(inner) => {
                 let struct_defs = self.struct_defs.clone();
                 let ptr = self.next_temp();
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
-                let target_name = if let Expr::Identifier(id) = target.as_ref() {
+                let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
                 } else { None };
                 let mut offset = 0i32;
@@ -2287,8 +2289,8 @@ Expr::Return(inner) => {
 
         for el in elements {
             match el {
-                Expr::StringLiteral(s) | Expr::MultilineString(s) => parts.push(s.clone()),
-                Expr::Identifier(name) => {
+                Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => parts.push(s.clone()),
+                Expr::Identifier(name, _) => {
                     if let Some((typ, alloca, _)) = locals.get(name) {
                         match typ {
                             Type::I32 => {
@@ -2374,9 +2376,9 @@ Expr::Return(inner) => {
         locals: &HashMap<String, (Type, String, bool)>,
     ) -> CompileResult<Val> {
         match expr {
-            Expr::Literal(Literal::Int(n)) => Ok(Val::Imm(*n)),
-            Expr::Literal(Literal::Float(n)) => Ok(Val::ImmFloat(*n)),
-            Expr::Literal(Literal::Bool(b)) => Ok(Val::Imm(if *b { 1 } else { 0 })),
+            Expr::Literal(Literal::Int(n), _) => Ok(Val::Imm(*n)),
+            Expr::Literal(Literal::Float(n), _) => Ok(Val::ImmFloat(*n)),
+            Expr::Literal(Literal::Bool(b), _) => Ok(Val::Imm(if *b { 1 } else { 0 })),
             Expr::Call { func, args } => {
                 let ret_ty = self
                     .builtin_return_type(func)
@@ -2390,7 +2392,7 @@ Expr::Return(inner) => {
                     .ok_or_else(|| CompileError::new("missing call result"))?;
                 Ok(Val::Reg(result))
             }
-            Expr::Identifier(name) => {
+            Expr::Identifier(name, _) => {
                 if let Some((typ, alloca, _)) = locals.get(name) {
                     return match typ {
                         Type::I32 => {
@@ -2448,7 +2450,7 @@ Expr::Return(inner) => {
                         .unwrap_or_default()
                 )))
             }
-            Expr::Unary(op, inner) => {
+            Expr::Unary(op, inner, _) => {
                 let v = self.generate_int_expr(inner, params, locals)?;
                 match op {
                     UnaryOp::Pos => match v {
@@ -2493,7 +2495,7 @@ Expr::Return(inner) => {
                     },
                 }
             }
-            Expr::Binary(l, op, r) => {
+            Expr::Binary(l, op, r, _) => {
                 let lv = self.generate_int_expr(l, params, locals)?;
                 let rv = self.generate_int_expr(r, params, locals)?;
                 let res = self.next_temp();
@@ -2796,7 +2798,7 @@ Expr::Return(inner) => {
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let mut offset = 0i32;
                 let mut field_type = "i32".to_string();
-                let target_name = if let Expr::Identifier(id) = target.as_ref() {
+                let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
                 } else { None };
                 if let Some(ref name) = target_name {
@@ -2851,9 +2853,9 @@ Expr::Return(inner) => {
         locals: &HashMap<String, (Type, String, bool)>,
     ) -> CompileResult<Val> {
         match expr {
-            Expr::Literal(Literal::Float(n)) => Ok(Val::ImmFloat(*n)),
-            Expr::Literal(Literal::Int(n)) => Ok(Val::ImmFloat(*n as f64)),
-            Expr::Literal(Literal::Bool(b)) => Ok(Val::ImmFloat(if *b { 1.0 } else { 0.0 })),
+            Expr::Literal(Literal::Float(n), _) => Ok(Val::ImmFloat(*n)),
+            Expr::Literal(Literal::Int(n), _) => Ok(Val::ImmFloat(*n as f64)),
+            Expr::Literal(Literal::Bool(b), _) => Ok(Val::ImmFloat(if *b { 1.0 } else { 0.0 })),
             Expr::Call { func, args } => {
                 let ret_ty = self
                     .builtin_return_type(func)
@@ -2867,7 +2869,7 @@ Expr::Return(inner) => {
                     .ok_or_else(|| CompileError::new("missing call result"))?;
                 Ok(Val::Reg(result))
             }
-            Expr::Identifier(name) => {
+            Expr::Identifier(name, _) => {
                 if let Some((typ, alloca, _)) = locals.get(name) {
                     return match typ {
                         Type::F64 => {
@@ -2887,7 +2889,7 @@ Expr::Return(inner) => {
                 }
                 Err(CompileError::new(format!("variable '{}' is not a float", name)))
             }
-            Expr::Unary(op, inner) => {
+            Expr::Unary(op, inner, _) => {
                 let v = self.generate_float_expr(inner, params, locals)?;
                 match op {
                     UnaryOp::Pos => Ok(v),
@@ -2905,7 +2907,7 @@ Expr::Return(inner) => {
                     }
                 }
             }
-            Expr::Binary(l, op, r) => {
+            Expr::Binary(l, op, r, _) => {
                 let lv = self.generate_float_expr(l, params, locals)?;
                 let rv = self.generate_float_expr(r, params, locals)?;
                 let res = self.next_temp();
@@ -2997,7 +2999,7 @@ Expr::Return(inner) => {
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let mut offset = 0i32;
                 let mut field_type = "i32".to_string();
-                let target_name = if let Expr::Identifier(id) = target.as_ref() {
+                let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
                 } else { None };
                 if let Some(ref name) = target_name {
@@ -3107,11 +3109,11 @@ Expr::Return(inner) => {
         result: &str,
     ) -> CompileResult<()> {
         match arg {
-            Expr::StringLiteral(s) | Expr::MultilineString(s) => {
+            Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
                 let id = self.emit_string_const(s);
                 self.emit_gep(&id, s.len() + 1, result);
             }
-            Expr::Identifier(name) => {
+            Expr::Identifier(name, _) => {
                 if let Some((Type::Ptr, alloca, _)) = locals.get(name) {
                     writeln!(
                         &mut self.functions,
@@ -3196,13 +3198,13 @@ Expr::Return(inner) => {
                 }
                 writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
             }
-            Expr::StringLiteral(s) | Expr::MultilineString(s) => {
+            Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
                 let id = self.emit_string_const(s);
                 self.emit_gep(&id, s.len() + 1, result);
             }
-            Expr::FString(elements) => self.emit_fstring(elements, params, locals, result)?,
+            Expr::FString(elements, _) => self.emit_fstring(elements, params, locals, result)?,
             Expr::Borrow { name, .. } => self.emit_borrow_ptr(name, params, locals, result)?,
-            Expr::Identifier(_) => self.emit_print_arg(expr, params, locals, result)?,
+            Expr::Identifier(_, _) => self.emit_print_arg(expr, params, locals, result)?,
             Expr::Call { func, args } => {
                 let ty = self
                     .builtin_return_type(func)
@@ -3218,7 +3220,7 @@ Expr::Return(inner) => {
                 let call_reg = call_result.ok_or_else(|| CompileError::new("expected call result"))?;
                 writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, call_reg).unwrap();
             }
-            Expr::Binary(l, op, r) if *op == BinOp::Add => {
+            Expr::Binary(l, op, r, _) if *op == BinOp::Add => {
                 let left_ty = self.infer_expr_type(l, params, locals);
                 let right_ty = self.infer_expr_type(r, params, locals);
                 if left_ty == "i8*" && right_ty == "i8*" {
@@ -3371,7 +3373,7 @@ Expr::Return(inner) => {
                 }
                 writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
             }
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements, _) => {
                 let alloc_size = (elements.len() * 8) as i64;
                 let malloc_reg = self.next_temp();
                 writeln!(&mut self.functions, "  %{} = call i8* @malloc(i64 {})", malloc_reg, alloc_size).unwrap();
@@ -3422,7 +3424,7 @@ Expr::Return(inner) => {
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let mut offset = 0i32;
                 let mut field_type = "i32".to_string();
-                let target_name = if let Expr::Identifier(id) = target.as_ref() {
+                let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
                 } else { None };
                 if let Some(ref name) = target_name {
@@ -4142,7 +4144,7 @@ Expr::Return(inner) => {
         params: &[String],
         locals: &HashMap<String, (Type, String, bool)>,
     ) -> CompileResult<()> {
-        let code = if let Expr::StringLiteral(s) = &args[0] {
+        let code = if let Expr::StringLiteral(s, _) = &args[0] {
             s
         } else {
             return Err(CompileError::new("asm: first argument is a str"));
@@ -4167,7 +4169,7 @@ Expr::Return(inner) => {
                 operands.push(',');
             }
 
-            if let Expr::Identifier(name) = arg {
+            if let Expr::Identifier(name, _) = arg {
                 if let Some((typ, alloca, _)) = locals.get(name) {
                     match typ {
                         Type::I32 => {

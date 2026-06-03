@@ -31,9 +31,25 @@ pub enum UnaryOp {
     Not,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub line: usize,
+    pub column: usize,
+}
+
+impl SourceSpan {
+    pub fn new(line: usize, column: usize) -> Self {
+        Self { line, column }
+    }
+
+    pub fn unknown() -> Self {
+        Self { line: 0, column: 0 }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Import(String),
+    Import(String, SourceSpan),
     List(Vec<Expr>),
     Index {
         target: Box<Expr>,
@@ -57,7 +73,7 @@ pub enum Expr {
         name: String,
         fields: Vec<(String, Expr)>,
     },
-    Tuple(Vec<Expr>),
+    Tuple(Vec<Expr>, SourceSpan),
     TupleAccess {
         target: Box<Expr>,
         index: usize,
@@ -67,14 +83,15 @@ pub enum Expr {
         variant_name: String,
         args: Vec<Expr>,
     },
-    StringLiteral(String),
-    Identifier(String),
+    StringLiteral(String, SourceSpan),
+    Identifier(String, SourceSpan),
     Borrow {
         name: String,
         mutable: bool,
+        span: SourceSpan,
     },
-    FString(Vec<Expr>),
-    MultilineString(String),
+    FString(Vec<Expr>, SourceSpan),
+    MultilineString(String, SourceSpan),
     Call {
         func: String,
         args: Vec<Expr>,
@@ -89,10 +106,10 @@ pub enum Expr {
         name: String,
         value: Box<Expr>,
     },
-    Return(Box<Expr>),
-    Literal(Literal),
-    Binary(Box<Expr>, BinOp, Box<Expr>),
-    Unary(UnaryOp, Box<Expr>),
+    Return(Box<Expr>, SourceSpan),
+    Literal(Literal, SourceSpan),
+    Binary(Box<Expr>, BinOp, Box<Expr>, SourceSpan),
+    Unary(UnaryOp, Box<Expr>, SourceSpan),
     If {
         condition: Box<Expr>,
         then_branch: Box<Block>,
@@ -119,6 +136,41 @@ pub enum Expr {
     },
     Break,
     Continue,
+}
+
+impl Expr {
+    pub fn span(&self) -> SourceSpan {
+        match self {
+            Expr::Import(_, span)
+            | Expr::Tuple(_, span)
+            | Expr::StringLiteral(_, span)
+            | Expr::Identifier(_, span)
+            | Expr::Borrow { span, .. }
+            | Expr::FString(_, span)
+            | Expr::MultilineString(_, span)
+            | Expr::Return(_, span)
+            | Expr::Literal(_, span)
+            | Expr::Binary(_, _, _, span)
+            | Expr::Unary(_, _, span) => *span,
+            Expr::List(items) => items.first().map_or(SourceSpan::unknown(), |e| e.span()),
+            Expr::Index { target, .. } => target.span(),
+            Expr::AssignIndex { index, .. } => index.span(),
+            Expr::FieldAccess { target, .. } => target.span(),
+            Expr::FieldAssign { target, .. } => target.span(),
+            Expr::StructLiteral { fields, .. } => fields.first().map_or(SourceSpan::unknown(), |(_, e)| e.span()),
+            Expr::TupleAccess { target, .. } => target.span(),
+            Expr::EnumLiteral { args, .. } => args.first().map_or(SourceSpan::unknown(), |e| e.span()),
+            Expr::Call { args, .. } => args.first().map_or(SourceSpan::unknown(), |e| e.span()),
+            Expr::Let { value, .. } => value.span(),
+            Expr::Assign { value, .. } => value.span(),
+            Expr::If { condition, .. } => condition.span(),
+            Expr::While { condition, .. } => condition.span(),
+            Expr::For { iterable, .. } => iterable.span(),
+            Expr::ForRange { start, .. } => start.span(),
+            Expr::Match { expr, .. } => expr.span(),
+            Expr::Break | Expr::Continue => SourceSpan::unknown(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

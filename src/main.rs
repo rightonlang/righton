@@ -36,37 +36,50 @@ struct Cli {
     emit_ir: bool,
 }
 
-fn format_error(source: &str, err: &str, is_parse: bool) -> String {
-    if !is_parse {
-        return format!("Error: {}", err);
+fn extract_line_col(err: &str) -> Option<(usize, usize)> {
+    if let Some(start) = err.find("(line=") {
+        let tail = &err[start + 6..];
+        let parts: Vec<&str> = tail.split(&[',', ')'][..]).collect();
+        let line = parts
+            .get(0)
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let col = err
+            .split("col=")
+            .nth(1)
+            .and_then(|s| s.split(&[')', ','][..]).next())
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        return Some((line, col));
     }
-    if let Some(cap) = err.split("(line=").nth(1) {
-        if let Some(line_str) = cap.split(", ").next() {
-            if let Ok(line_num) = line_str.parse::<usize>() {
-                if let Some(col_str) = cap.split("col=").nth(1) {
-                    if let Some(col_str) = col_str.split(')').next() {
-                        if let Ok(col_num) = col_str.parse::<usize>() {
-                            let err_msg = err.split("(line=").next().unwrap_or(err).trim();
-                            let source_line = source.lines().nth(line_num - 1).unwrap_or("");
-                            let mut result = format!("Error: {} (line={}, col={})\n", err_msg, line_num, col_num);
-                            if !source_line.is_empty() {
-                                result.push_str(&format!("  {}\n", source_line));
-                            let indent = col_num.min(source_line.len());
-                            let caret = if indent > 0 {
-                                format!("  {:indent$}^---\n", "", indent = indent)
-                            } else {
-                                format!("  ^---\n")
-                            };
-                            result.push_str(&caret);
-                            }
-                            return result;
-                        }
-                    }
-                }
+    if let Some(start) = err.find("line ") {
+        let tail = &err[start + 5..];
+        if let Some((line_str, _)) = tail.split_once(':') {
+            if let Ok(line) = line_str.trim().parse::<usize>() {
+                return Some((line, 0));
             }
         }
     }
-    format!("Error: {}", err)
+    None
+}
+
+fn format_error(source: &str, err: &str, _is_parse: bool) -> String {
+    let mut result = format!("Error: {}", err);
+    if let Some((line, col)) = extract_line_col(err) {
+        let line_num = line.saturating_sub(1);
+        let source_line = source.lines().nth(line_num).unwrap_or("");
+        if !source_line.is_empty() {
+            result.push_str(&format!("\n  {}\n", source_line));
+            let indent = col.min(source_line.len());
+            let caret = if indent > 0 {
+                format!("  {:indent$}^---", "", indent = indent)
+            } else {
+                "  ^---".to_string()
+            };
+            result.push_str(&format!("\n{}\n", caret));
+        }
+    }
+    result
 }
 
 fn main() {
@@ -91,11 +104,14 @@ fn run() -> Result<(), String> {
         }
     };
 
+    let name = Path::new(&input_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "failed to derive input file stem".to_string())?;
+
     let output_path: String = match cli.output {
         Some(path) => path,
-        None => {
-            return Err("output file not specified. Use -o or --output.".to_string());
-        }
+        None => format!("{}.ll", name),
     };
 
     let profile = cli
