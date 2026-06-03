@@ -2112,6 +2112,7 @@ mod tests {
     // NEW STDLIB TESTS
     // ========================
 
+    #[cfg(unix)]
     #[test]
     fn test_stdlib_to_hex() {
         let input = temp_file("ron");
