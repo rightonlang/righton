@@ -52,6 +52,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIB" >> $GITHUB_ENV
           echo "LIBPATH=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIBPATH" >> $GITHUB_ENV
           echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/debug/lib;$LIB" >> $GITHUB_ENV
