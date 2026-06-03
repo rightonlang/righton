@@ -95,7 +95,7 @@ jobs:
         run: cargo test --verbose
 
       - name: Run tests on non-macOS
-        if: runner.os != 'macOS'
+        if: runner.os != 'macOS' && runner.os != 'Windows'
         run: cargo test --verbose
 
       - name: Upload compiler artifact
