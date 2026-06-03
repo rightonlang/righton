@@ -3,12 +3,19 @@ mod tests {
     use righton::ast::*;
     use righton::compiler::LLVMTextGen;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn temp_root() -> PathBuf {
+        let mut root = std::env::temp_dir();
+        root.push("righton_integration_tests");
+        fs::create_dir_all(&root).expect("failed to create temp root directory");
+        root
+    }
+
     fn temp_file(ext: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
+        let mut path = temp_root();
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock moved backwards")
@@ -19,6 +26,14 @@ mod tests {
 
     fn run_bin(args: &[&str]) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_righton"))
+            .args(args)
+            .output()
+            .expect("failed to run binary")
+    }
+
+    fn run_bin_in_dir(args: &[&str], cwd: &Path) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_righton"))
+            .current_dir(cwd)
             .args(args)
             .output()
             .expect("failed to run binary")
@@ -448,30 +463,22 @@ mod tests {
 
     #[test]
     fn test_cli_imports_another_module() {
-        let module = temp_file("ron");
-        let input = temp_file("ron");
-        let output = temp_file("ll");
+        let temp_dir = temp_root();
+        let module = temp_dir.join("module.ron");
+        let input = temp_dir.join("input.ron");
+        let output = temp_dir.join("output.ll");
 
-        fs::write(
-            &module,
-            "fn answer():\n    return 41\n",
-        )
-        .unwrap();
+        fs::write(&module, "fn answer():\n    return 41\n").unwrap();
         fs::write(
             &input,
-            format!(
-                "import \"{}\"\nfn main():\n    answer()\n    return 0\n",
-                module.to_string_lossy()
-            ),
+            "import \"./module.ron\"\nfn main():\n    answer()\n    return 0\n",
         )
         .unwrap();
 
-        let result = run_bin(&[
-            "-i",
-            input.to_str().unwrap(),
-            "-o",
-            output.to_str().unwrap(),
-        ]);
+        let result = run_bin_in_dir(
+            &["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()],
+            &temp_dir,
+        );
 
         assert!(result.status.success());
         let ir = fs::read_to_string(&output).unwrap();
