@@ -47,18 +47,21 @@ jobs:
           vcpkg install libxml2[iconv,zlib]:x64-windows-static
           vcpkg integrate install
           vcpkg list
-                
+
+      - name: Set VCPKG_ROOT
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "VCPKG_ROOT=C:/vcpkg" >> $GITHUB_ENV
+
       - name: Export vcpkg environment variables
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIB" >> $GITHUB_ENV
           echo "LIBPATH=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIBPATH" >> $GITHUB_ENV
           echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/debug/lib;$LIB" >> $GITHUB_ENV
           echo "LIBPATH=$VCPKG_ROOT/installed/x64-windows-static/debug/lib;$LIBPATH" >> $GITHUB_ENV
           echo "INCLUDE=$VCPKG_ROOT/installed/x64-windows-static/include;$INCLUDE" >> $GITHUB_ENV
-          # Добавьте это:
           echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/lib" >> $GITHUB_ENV
           echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/debug/lib" >> $GITHUB_ENV
           ls $VCPKG_ROOT/installed/x64-windows-static/debug/lib/
