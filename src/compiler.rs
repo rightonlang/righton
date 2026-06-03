@@ -618,11 +618,54 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
     }
 
     fn resolve_module_path(&self, spec: &str) -> PathBuf {
-        let path = if self.is_stdlib_module(spec) {
+        if self.is_stdlib_module(spec) {
+            // 1) honor explicit env var override
+            if let Ok(val) = std::env::var("RIGHTON_STDLIB_PATH") {
+                let p = PathBuf::from(&val);
+                if p.is_file() {
+                    return p;
+                }
+                // If it's a directory, try common locations
+                let mut try_dir = p.clone();
+                try_dir.push("stdlib");
+                try_dir.push("std.ro");
+                if try_dir.exists() {
+                    return try_dir;
+                }
+                let mut try_file = p.clone();
+                try_file.push("std.ro");
+                if try_file.exists() {
+                    return try_file;
+                }
+            }
+
+            // 2) try executable-relative path (next to the exe or in an adjacent `stdlib` folder)
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(dir) = exe_path.parent() {
+                    let candidate = dir.join("stdlib").join("std.ro");
+                    if candidate.exists() {
+                        return candidate;
+                    }
+                    let candidate2 = dir.join("std.ro");
+                    if candidate2.exists() {
+                        return candidate2;
+                    }
+                }
+            }
+
+            // 3) try current working directory
+            let cwd_candidate = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("stdlib").join("std.ro");
+            if cwd_candidate.exists() {
+                return cwd_candidate;
+            }
+
+            // 4) final fallback: compile-time manifest directory (keeps dev behavior)
             let mut bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             bundled.push("stdlib/std.ro");
             return bundled;
-        } else if spec.ends_with(".ro") || spec.ends_with(".ron") {
+        }
+
+        let path = if spec.ends_with(".ro") || spec.ends_with(".ron") {
             PathBuf::from(spec)
         } else if spec.contains('/') || spec.contains('\\') {
             PathBuf::from(format!("{}.ro", spec))
