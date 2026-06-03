@@ -84,6 +84,7 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(input: &str) -> Self {
+        let input = input.replace("\r\n", "\n").replace('\r', "\n");
         Lexer {
             src: input.chars().collect(),
             pos: 0,
