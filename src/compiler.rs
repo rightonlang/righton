@@ -906,7 +906,7 @@ writeln!(
             Expr::Tuple(elements, _) => {
                 if elements.is_empty() { "void" } else { "i8*" }
             }
-            Expr::TupleAccess { target, index } => {
+            Expr::TupleAccess { target: _, index: _ } => {
                 "i32"
             }
             Expr::FieldAssign { .. } => "void",
@@ -4218,7 +4218,6 @@ Expr::Return(inner, _) => {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
     use super::LLVMTextGen;

@@ -104,14 +104,16 @@ fn run() -> Result<(), String> {
         }
     };
 
-    let name = Path::new(&input_path)
+    let _name = Path::new(&input_path)
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| "failed to derive input file stem".to_string())?;
 
-    let output_path: String = match cli.output {
+    let output_path = match cli.output {
         Some(path) => path,
-        None => format!("{}.ll", name),
+        None => {
+            return Err("output file not specified. Use -o or --output.".to_string());
+        }
     };
 
     let profile = cli

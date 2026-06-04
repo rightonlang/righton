@@ -54,7 +54,7 @@ mod tests {
                     Expr::Let {
                         name: "x".to_string(),
                         typ: Some("f64".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Float(3.14))),
+                        value: Box::new(Expr::Literal(Literal::Float(3.14), SourceSpan::unknown())),
                         is_const: false,
                     },
                 ],
@@ -87,7 +87,7 @@ mod tests {
                     Expr::Let {
                         name: "flag".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Bool(true))),
+                        value: Box::new(Expr::Literal(Literal::Bool(true), SourceSpan::unknown())),
                         is_const: false,
                     },
                 ],
@@ -119,13 +119,13 @@ mod tests {
                     Expr::Let {
                         name: "a".to_string(),
                         typ: Some("f64".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Float(2.5))),
+                        value: Box::new(Expr::Literal(Literal::Float(2.5), SourceSpan::unknown())),
                         is_const: false,
                     },
                     Expr::Let {
                         name: "b".to_string(),
                         typ: Some("f64".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Float(3.5))),
+                        value: Box::new(Expr::Literal(Literal::Float(3.5), SourceSpan::unknown())),
                         is_const: false,
                     },
                     // Create an expression that uses a and b
@@ -133,9 +133,10 @@ mod tests {
                         name: "c".to_string(),
                         typ: Some("f64".to_string()),
                         value: Box::new(Expr::Binary(
-                            Box::new(Expr::Identifier("a".to_string())),
+                            Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Add,
-                            Box::new(Expr::Identifier("b".to_string())),
+                            Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -168,13 +169,13 @@ mod tests {
                     Expr::Let {
                         name: "a".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(5))),
+                        value: Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
                         is_const: false,
                     },
                     Expr::Let {
                         name: "b".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(3))),
+                        value: Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
                         is_const: false,
                     },
                     // Create an expression that uses a and b
@@ -182,9 +183,10 @@ mod tests {
                         name: "c".to_string(),
                         typ: Some("i32".to_string()),
                         value: Box::new(Expr::Binary(
-                            Box::new(Expr::Identifier("a".to_string())),
+                            Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Mul,
-                            Box::new(Expr::Identifier("b".to_string())),
+                            Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -217,13 +219,13 @@ mod tests {
                     Expr::Let {
                         name: "a".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(5))),
+                        value: Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
                         is_const: false,
                     },
                     Expr::Let {
                         name: "b".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(3))),
+                        value: Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
                         is_const: false,
                     },
                     // Create a comparison expression
@@ -231,9 +233,10 @@ mod tests {
                         name: "result".to_string(),
                         typ: Some("i32".to_string()),
                         value: Box::new(Expr::Binary(
-                            Box::new(Expr::Identifier("a".to_string())),
+                            Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
-                            Box::new(Expr::Identifier("b".to_string())),
+                            Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -266,13 +269,13 @@ mod tests {
                     Expr::Let {
                         name: "a".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(5))),
+                        value: Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
                         is_const: false,
                     },
                     Expr::Let {
                         name: "b".to_string(),
                         typ: Some("f64".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Float(3.5))),
+                        value: Box::new(Expr::Literal(Literal::Float(3.5), SourceSpan::unknown())),
                         is_const: false,
                     },
                     // This should convert int to float during operation
@@ -280,9 +283,10 @@ mod tests {
                         name: "c".to_string(),
                         typ: Some("f64".to_string()),
                         value: Box::new(Expr::Binary(
-                            Box::new(Expr::Identifier("a".to_string())),
+                            Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Add,
-                            Box::new(Expr::Identifier("b".to_string())),
+                            Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -572,24 +576,26 @@ mod tests {
                     Expr::Let {
                         name: "x".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(5))),
+                        value: Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
                         is_const: false,
                     },
                     // while x > 0:
                     //     x = x - 1
                     Expr::While {
                         condition: Box::new(Expr::Binary(
-                            Box::new(Expr::Identifier("x".to_string())),
+                            Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
-                            Box::new(Expr::Literal(Literal::Int(0))),
+                            Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
                         )),
                         body: Box::new(Block {
                             stmts: vec![Expr::Assign {
                                 name: "x".to_string(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier("x".to_string())),
+                                    Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                                     BinOp::Sub,
-                                    Box::new(Expr::Literal(Literal::Int(1))),
+                                    Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
+                                SourceSpan::unknown(),
                                 )),
                             }],
                         }),
@@ -628,7 +634,7 @@ mod tests {
                     Expr::Let {
                         name: "x".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(10))),
+                        value: Box::new(Expr::Literal(Literal::Int(10), SourceSpan::unknown())),
                         is_const: false,
                     },
                     // while x > 0:
@@ -637,17 +643,19 @@ mod tests {
                     //     x = x - 1
                     Expr::While {
                         condition: Box::new(Expr::Binary(
-                            Box::new(Expr::Identifier("x".to_string())),
+                            Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
-                            Box::new(Expr::Literal(Literal::Int(0))),
+                            Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
                         )),
                         body: Box::new(Block {
                             stmts: vec![
                                 Expr::If {
                                     condition: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string())),
+                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                                         BinOp::Eq,
-                                        Box::new(Expr::Literal(Literal::Int(5))),
+                                        Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
+                                    SourceSpan::unknown(),
                                     )),
                                     then_branch: Box::new(Block {
                                         stmts: vec![Expr::Break],
@@ -657,9 +665,10 @@ mod tests {
                                 Expr::Assign {
                                     name: "x".to_string(),
                                     value: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string())),
+                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                                         BinOp::Sub,
-                                        Box::new(Expr::Literal(Literal::Int(1))),
+                                        Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
+                                    SourceSpan::unknown(),
                                     )),
                                 },
                             ],
@@ -697,7 +706,7 @@ mod tests {
                     Expr::Let {
                         name: "x".to_string(),
                         typ: Some("i32".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(3))),
+                        value: Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
                         is_const: false,
                     },
                     // while x > 0:
@@ -706,17 +715,19 @@ mod tests {
                     //     x = x - 1
                     Expr::While {
                         condition: Box::new(Expr::Binary(
-                            Box::new(Expr::Identifier("x".to_string())),
+                            Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
-                            Box::new(Expr::Literal(Literal::Int(0))),
+                            Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
                         )),
                         body: Box::new(Block {
                             stmts: vec![
                                 Expr::If {
                                     condition: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string())),
+                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                                         BinOp::Eq,
-                                        Box::new(Expr::Literal(Literal::Int(2))),
+                                        Box::new(Expr::Literal(Literal::Int(2), SourceSpan::unknown())),
+                                    SourceSpan::unknown(),
                                     )),
                                     then_branch: Box::new(Block {
                                         stmts: vec![Expr::Continue],
@@ -726,9 +737,10 @@ mod tests {
                                 Expr::Assign {
                                     name: "x".to_string(),
                                     value: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string())),
+                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                                         BinOp::Sub,
-                                        Box::new(Expr::Literal(Literal::Int(1))),
+                                        Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
+                                    SourceSpan::unknown(),
                                     )),
                                 },
                             ],
@@ -769,7 +781,7 @@ mod tests {
                     //     (body)
                     Expr::For {
                         variable: "i".to_string(),
-                        iterable: Box::new(Expr::Literal(Literal::Int(5))),
+                        iterable: Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
                         body: Box::new(Block {
                             stmts: vec![],
                         }),
@@ -810,13 +822,14 @@ mod tests {
                     //         break
                     Expr::For {
                         variable: "i".to_string(),
-                        iterable: Box::new(Expr::Literal(Literal::Int(10))),
+                        iterable: Box::new(Expr::Literal(Literal::Int(10), SourceSpan::unknown())),
                         body: Box::new(Block {
                             stmts: vec![Expr::If {
                                 condition: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier("i".to_string())),
+                                    Box::new(Expr::Identifier("i".to_string(), SourceSpan::unknown())),
                                     BinOp::Eq,
-                                    Box::new(Expr::Literal(Literal::Int(5))),
+                                    Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
+                                SourceSpan::unknown(),
                                 )),
                                 then_branch: Box::new(Block {
                                     stmts: vec![Expr::Break],
@@ -857,13 +870,14 @@ mod tests {
                     //         continue
                     Expr::For {
                         variable: "i".to_string(),
-                        iterable: Box::new(Expr::Literal(Literal::Int(5))),
+                        iterable: Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
                         body: Box::new(Block {
                             stmts: vec![Expr::If {
                                 condition: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier("i".to_string())),
+                                    Box::new(Expr::Identifier("i".to_string(), SourceSpan::unknown())),
                                     BinOp::Eq,
-                                    Box::new(Expr::Literal(Literal::Int(3))),
+                                    Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
+                                SourceSpan::unknown(),
                                 )),
                                 then_branch: Box::new(Block {
                                     stmts: vec![Expr::Continue],
@@ -909,17 +923,18 @@ mod tests {
                     //             break
                     Expr::For {
                         variable: "i".to_string(),
-                        iterable: Box::new(Expr::Literal(Literal::Int(3))),
+                        iterable: Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
                         body: Box::new(Block {
                             stmts: vec![Expr::For {
                                 variable: "j".to_string(),
-                                iterable: Box::new(Expr::Literal(Literal::Int(3))),
+                                iterable: Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
                                 body: Box::new(Block {
                                     stmts: vec![Expr::If {
                                         condition: Box::new(Expr::Binary(
-                                            Box::new(Expr::Identifier("j".to_string())),
+                                            Box::new(Expr::Identifier("j".to_string(), SourceSpan::unknown())),
                                             BinOp::Eq,
-                                            Box::new(Expr::Literal(Literal::Int(2))),
+                                            Box::new(Expr::Literal(Literal::Int(2), SourceSpan::unknown())),
+                                        SourceSpan::unknown(),
                                         )),
                                         then_branch: Box::new(Block {
                                             stmts: vec![Expr::Break],
@@ -966,17 +981,18 @@ mod tests {
                     //             continue
                     Expr::For {
                         variable: "i".to_string(),
-                        iterable: Box::new(Expr::Literal(Literal::Int(2))),
+                        iterable: Box::new(Expr::Literal(Literal::Int(2), SourceSpan::unknown())),
                         body: Box::new(Block {
                             stmts: vec![Expr::For {
                                 variable: "j".to_string(),
-                                iterable: Box::new(Expr::Literal(Literal::Int(2))),
+                                iterable: Box::new(Expr::Literal(Literal::Int(2), SourceSpan::unknown())),
                                 body: Box::new(Block {
                                     stmts: vec![Expr::If {
                                         condition: Box::new(Expr::Binary(
-                                            Box::new(Expr::Identifier("j".to_string())),
+                                            Box::new(Expr::Identifier("j".to_string(), SourceSpan::unknown())),
                                             BinOp::Eq,
-                                            Box::new(Expr::Literal(Literal::Int(1))),
+                                            Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
+                                        SourceSpan::unknown(),
                                         )),
                                         then_branch: Box::new(Block {
                                             stmts: vec![Expr::Continue],
@@ -1855,10 +1871,10 @@ mod tests {
                         name: "tup".to_string(),
                         typ: None,
                         value: Box::new(Expr::Tuple(vec![
-                            Expr::Literal(Literal::Int(1)),
-                            Expr::Literal(Literal::Int(2)),
-                            Expr::Literal(Literal::Int(3)),
-                        ])),
+                            Expr::Literal(Literal::Int(1), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Int(2), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Int(3), SourceSpan::unknown()),
+                        ], SourceSpan::unknown())),
                         is_const: false,
                     },
                 ],
@@ -1890,16 +1906,16 @@ mod tests {
                         name: "tup".to_string(),
                         typ: None,
                         value: Box::new(Expr::Tuple(vec![
-                            Expr::Literal(Literal::Int(10)),
-                            Expr::Literal(Literal::Int(20)),
-                        ])),
+                            Expr::Literal(Literal::Int(10), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Int(20), SourceSpan::unknown()),
+                        ], SourceSpan::unknown())),
                         is_const: false,
                     },
                     Expr::Let {
                         name: "x".to_string(),
                         typ: None,
                         value: Box::new(Expr::TupleAccess {
-                            target: Box::new(Expr::Identifier("tup".to_string())),
+                            target: Box::new(Expr::Identifier("tup".to_string(), SourceSpan::unknown())),
                             index: 0,
                         }),
                         is_const: false,
@@ -1961,7 +1977,7 @@ mod tests {
                 param_types: vec![],
                 return_type: None,
                 body: vec![
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0)))),
+                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
                 ],
             }],
             profile: "debug".to_string(),
@@ -1990,7 +2006,7 @@ mod tests {
                 param_types: vec![],
                 return_type: None,
                 body: vec![
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0)))),
+                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
                 ],
             }],
             profile: "debug".to_string(),
@@ -2023,10 +2039,10 @@ mod tests {
                     Expr::Let {
                         name: "x".to_string(),
                         typ: Some("MyInt".to_string()),
-                        value: Box::new(Expr::Literal(Literal::Int(42))),
+                        value: Box::new(Expr::Literal(Literal::Int(42), SourceSpan::unknown())),
                         is_const: false,
                     },
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0)))),
+                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
                 ],
             }],
             profile: "debug".to_string(),

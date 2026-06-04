@@ -6,7 +6,7 @@ mod tests {
     #[test]
     fn test_infer_expr_type_for_float() {
         let generator = LLVMTextGen::new();
-        let expr = Expr::Literal(Literal::Float(3.14));
+        let expr = Expr::Literal(Literal::Float(3.14), SourceSpan::unknown());
         let params = vec![];
         let locals = std::collections::HashMap::new();
 
@@ -17,7 +17,7 @@ mod tests {
     #[test]
     fn test_infer_expr_type_for_boolean() {
         let generator = LLVMTextGen::new();
-        let expr = Expr::Literal(Literal::Bool(true));
+        let expr = Expr::Literal(Literal::Bool(true), SourceSpan::unknown());
         let params = vec![];
         let locals = std::collections::HashMap::new();
 
@@ -28,7 +28,7 @@ mod tests {
     #[test]
     fn test_infer_expr_type_for_integer() {
         let generator = LLVMTextGen::new();
-        let expr = Expr::Literal(Literal::Int(42));
+        let expr = Expr::Literal(Literal::Int(42), SourceSpan::unknown());
         let params = vec![];
         let locals = std::collections::HashMap::new();
 
@@ -40,9 +40,10 @@ mod tests {
     fn test_binary_operation_type_inference() {
         let generator = LLVMTextGen::new();
         let expr = Expr::Binary(
-            Box::new(Expr::Literal(Literal::Float(2.5))),
+            Box::new(Expr::Literal(Literal::Float(2.5), SourceSpan::unknown())),
             BinOp::Add,
-            Box::new(Expr::Literal(Literal::Float(3.5))),
+            Box::new(Expr::Literal(Literal::Float(3.5), SourceSpan::unknown())),
+            SourceSpan::unknown(),
         );
         let params = vec![];
         let locals = std::collections::HashMap::new();

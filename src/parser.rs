@@ -1291,7 +1291,7 @@ mod tests {
     fn test_parse_borrow_expression() {
         let program = parse("&mut x");
         match extract_global_expr(&program, 0) {
-            Expr::Borrow { name, mutable } => {
+            Expr::Borrow { name, mutable, .. } => {
                 assert_eq!(name, "x");
                 assert!(*mutable);
             }
@@ -1359,7 +1359,7 @@ mod tests {
     fn test_parse_if_expression() {
         let program = parse("if x == 1:\n    return 1\nelse:\n    return 0");
         match extract_global_expr(&program, 0) {
-            Expr::If { condition, then_branch, else_branch } => {
+            Expr::If { condition: _, then_branch, else_branch } => {
                 assert!(then_branch.stmts.len() > 0);
                 assert!(else_branch.is_some());
             }
