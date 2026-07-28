@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::diagnostics::Diagnostic;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -7,15 +8,24 @@ pub enum Type {
     F64,
     Bool,
     String,
-    Struct(String),
+    Struct(String, Vec<Type>),
     Enum(String),
     Tuple(Vec<Type>),
     Void,
     Unknown,
+    Generic(String),
 }
 
 impl Type {
     pub fn from_str(s: &str) -> Self {
+        if let Some(open) = s.find('[') {
+            if s.ends_with(']') {
+                let base = &s[..open];
+                let args_str = &s[open + 1..s.len() - 1];
+                let args: Vec<Type> = args_str.split(',').map(|a| Type::from_str(a.trim())).collect();
+                return Type::Struct(base.to_string(), args);
+            }
+        }
         match s {
             "i32" => Type::I32,
             "f64" | "float" | "double" => Type::F64,
@@ -31,11 +41,12 @@ impl Type {
             Type::F64 => "double",
             Type::Bool => "i32",
             Type::String => "i8*",
-            Type::Struct(_) => "i8*",
+            Type::Struct(_, _) => "i8*",
             Type::Enum(_) => "i8*",
             Type::Tuple(_) => "i8*",
             Type::Void => "void",
             Type::Unknown => "i8*",
+            Type::Generic(_) => "i8*",
         }
     }
 
@@ -66,6 +77,12 @@ impl TypeError {
         self.line = Some(line);
         self
     }
+
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let span = self.line.map(|l| SourceSpan::new(l, 0));
+        Diagnostic::error(Some("E0002"), self.message.clone())
+            .with_span(span.unwrap_or(SourceSpan::unknown()))
+    }
 }
 
 impl std::fmt::Display for TypeError {
@@ -91,6 +108,7 @@ struct TypeEnv {
     structs: Vec<crate::ast::StructDef>,
     enums: Vec<crate::ast::EnumDef>,
     type_aliases: HashMap<String, String>,
+    generics: HashMap<String, Type>,
 }
 
 impl TypeEnv {
@@ -103,6 +121,7 @@ impl TypeEnv {
             structs: Vec::new(),
             enums: Vec::new(),
             type_aliases: HashMap::new(),
+            generics: HashMap::new(),
         }
     }
 
@@ -110,6 +129,7 @@ impl TypeEnv {
         self.locals
             .get(name)
             .or_else(|| self.params.get(name))
+            .or_else(|| self.generics.get(name))
             .or_else(|| self.globals.get(name))
             .cloned()
             .unwrap_or(Type::Unknown)
@@ -123,6 +143,10 @@ impl TypeEnv {
         self.params.insert(name, typ);
     }
 
+    fn insert_generic(&mut self, name: String, typ: Type) {
+        self.generics.insert(name, typ);
+    }
+
     fn insert_global(&mut self, name: String, typ: Type) {
         self.globals.insert(name, typ);
     }
@@ -134,8 +158,11 @@ impl TypeEnv {
     fn resolve_type(&self, s: &str, self_struct: Option<&str>) -> Type {
         if s == "Self" {
             if let Some(struct_name) = self_struct {
-                return Type::Struct(struct_name.to_string());
+                return Type::Struct(struct_name.to_string(), Vec::new());
             }
+        }
+        if let Some(typ) = self.generics.get(s) {
+            return typ.clone();
         }
         let mut current = s.to_string();
         let mut seen = std::collections::HashSet::new();
@@ -336,6 +363,10 @@ impl TypeChecker {
     }
 
 fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
+        for gp in &func.generic_params {
+            self.env.insert_generic(gp.clone(), Type::Generic(gp.clone()));
+        }
+
         let mut param_types = Vec::new();
         for expr in &func.body {
             if let Expr::Let { name, typ, value, is_const: _ } = expr {
@@ -351,7 +382,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
         for (i, param) in func.params.iter().enumerate() {
             let typ = if param == "self" {
                 if let Some(ref struct_name) = self.self_struct_type {
-                    Type::Struct(struct_name.clone())
+                    Type::Struct(struct_name.clone(), Vec::new())
                 } else {
                     param_types.get(i).cloned().unwrap_or(Type::I32)
                 }
@@ -377,6 +408,9 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             self.env.params.remove(param);
         }
         self.env.locals.clear();
+        for gp in &func.generic_params {
+            self.env.generics.remove(gp);
+        }
 
         Ok(())
     }
@@ -386,7 +420,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Expr::Import(_, _) => Ok(Type::Void),
             Expr::List(items) => {
                 if items.is_empty() {
-                    return Ok(Type::Void);
+                    return Ok(Type::Struct("List".to_string(), vec![]));
                 }
                 let first_type = self.infer_expr(&items[0])?;
                 for item in &items[1..] {
@@ -395,7 +429,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                         return Err(TypeError::new("all list elements must have the same type"));
                     }
                 }
-                Ok(Type::String) // store as pointer for now
+                Ok(Type::Struct("List".to_string(), vec![first_type]))
             }
             Expr::Index { target, index } => {
                 let target_type = self.infer_expr(target)?;
@@ -403,8 +437,14 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 if index_type != Type::I32 {
                     return Err(TypeError::new("list index must be an integer"));
                 }
-                if target_type != Type::String && target_type != Type::I32 && target_type != Type::Unknown {
-                    return Err(TypeError::new("cannot index into this type"));
+                match &target_type {
+                    Type::String | Type::I32 | Type::Unknown => {}
+                    Type::Struct(name, elem_types) if name == "List" => {
+                        if let Some(elem_ty) = elem_types.first() {
+                            return Ok(elem_ty.clone());
+                        }
+                    }
+                    _ => return Err(TypeError::new("cannot index into this type")),
                 }
                 Ok(Type::I32) // array elements are i32 for now
             }
@@ -584,7 +624,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Expr::Break | Expr::Continue => Ok(Type::Void),
             Expr::FieldAccess { target, field } => {
                 let target_type = self.infer_expr(target)?;
-                if let Type::Struct(struct_name) = &target_type {
+                if let Type::Struct(struct_name, _) = &target_type {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name) {
                         if let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
                             return Ok(Type::from_str(&sf.typ));
@@ -597,7 +637,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Expr::FieldAssign { target, field, value } => {
                 let target_type = self.infer_expr(target)?;
                 let value_type = self.infer_expr(value)?;
-                if let Type::Struct(struct_name) = &target_type {
+                if let Type::Struct(struct_name, _) = &target_type {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name) {
                         if let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
                             let expected = Type::from_str(&sf.typ);
@@ -631,7 +671,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                             return Err(TypeError::new(format!("unknown field: {}", fname)));
                         }
                     }
-                    return Ok(Type::Struct(name.clone()));
+                    return Ok(Type::Struct(name.clone(), Vec::new()));
                 }
                 Err(TypeError::new(format!("unknown struct: {}", name)))
             }
@@ -752,6 +792,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
     fn builtin_return_type(&self, func: &str) -> Option<Type> {
         match func {
             "__rt_strlen" => return Some(Type::I32),
+            "__rt_wrap_string" => return Some(Type::String),
             "__rt_read_file" => return Some(Type::String),
             "__rt_write_file" => return Some(Type::I32),
             "__rt_exit" | "__rt_print_str" | "__rt_print_int" | "__rt_print_float" | "__rt_free" => {
@@ -1067,7 +1108,7 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             (Type::F64, Type::I32) => true,
             (Type::Bool, Type::I32) => true,
             (Type::I32, Type::Bool) => true,
-            (Type::Struct(a), Type::Struct(b)) => a == b,
+            (Type::Struct(a, _), Type::Struct(b, _)) => a == b,
             (Type::Tuple(a), Type::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| self.types_compatible(x, y)),
             _ => false,
         }
@@ -1079,11 +1120,12 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Type::F64 => "f64".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "str".to_string(),
-            Type::Struct(name) => name.clone(),
+            Type::Struct(name, _) => name.clone(),
             Type::Enum(name) => format!("enum {}", name),
             Type::Tuple(types) => format!("({})", types.iter().map(|t| self.type_name(t)).collect::<Vec<_>>().join(", ")),
             Type::Void => "void".to_string(),
             Type::Unknown => "unknown".to_string(),
+            Type::Generic(name) => name.clone(),
         }
     }
 }

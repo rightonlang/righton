@@ -46,6 +46,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -79,6 +80,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -111,6 +113,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -161,6 +164,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -211,6 +215,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -261,6 +266,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -568,6 +574,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -626,6 +633,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -698,6 +706,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -773,6 +782,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -813,6 +823,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -861,6 +872,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -913,6 +925,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -971,6 +984,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -1863,6 +1877,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -1898,6 +1913,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -1973,6 +1989,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -2002,6 +2019,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -2032,6 +2050,7 @@ mod tests {
             globals: vec![],
             functions: vec![FunctionDef {
                 name: "main".to_string(),
+                generic_params: Vec::new(),
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
@@ -2173,5 +2192,122 @@ mod tests {
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
+    }
+
+    // ========================
+    // LIST[T] TESTS
+    // ========================
+
+    #[test]
+    fn test_list_int_literal_compiles() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                generic_params: Vec::new(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    Expr::Let {
+                        name: "lst".to_string(),
+                        typ: None,
+                        value: Box::new(Expr::List(vec![
+                            Expr::Literal(Literal::Int(1), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Int(2), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Int(3), SourceSpan::unknown()),
+                        ])),
+                        is_const: false,
+                    },
+                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
+                ],
+            }],
+            profile: "debug".to_string(),
+            type_aliases: vec![],
+            impls: vec![],
+            enums: vec![],
+            structs: vec![],
+            name: "test".to_string(),
+        };
+
+        let result = r#gen.generate(&program);
+        assert!(result.is_ok(), "list literal should compile: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_list_index_compiles() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                generic_params: Vec::new(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    Expr::Let {
+                        name: "lst".to_string(),
+                        typ: None,
+                        value: Box::new(Expr::List(vec![
+                            Expr::Literal(Literal::Int(10), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Int(20), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Int(30), SourceSpan::unknown()),
+                        ])),
+                        is_const: false,
+                    },
+                    Expr::Return(Box::new(Expr::Index {
+                        target: Box::new(Expr::Identifier("lst".to_string(), SourceSpan::unknown())),
+                        index: Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
+                    }), SourceSpan::unknown()),
+                ],
+            }],
+            profile: "debug".to_string(),
+            type_aliases: vec![],
+            impls: vec![],
+            enums: vec![],
+            structs: vec![],
+            name: "test".to_string(),
+        };
+
+        let result = r#gen.generate(&program);
+        assert!(result.is_ok(), "list index should compile: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_list_float_literal_compiles() {
+        let mut r#gen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                generic_params: Vec::new(),
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    Expr::Let {
+                        name: "lst".to_string(),
+                        typ: None,
+                        value: Box::new(Expr::List(vec![
+                            Expr::Literal(Literal::Float(1.5), SourceSpan::unknown()),
+                            Expr::Literal(Literal::Float(2.5), SourceSpan::unknown()),
+                        ])),
+                        is_const: false,
+                    },
+                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
+                ],
+            }],
+            profile: "debug".to_string(),
+            type_aliases: vec![],
+            impls: vec![],
+            enums: vec![],
+            structs: vec![],
+            name: "test".to_string(),
+        };
+
+        let result = r#gen.generate(&program);
+        assert!(result.is_ok(), "float list literal should compile: {:?}", result.err());
     }
 }

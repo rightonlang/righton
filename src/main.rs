@@ -1,5 +1,7 @@
 use clap::Parser;
+use righton::ast::SourceSpan;
 use righton::compiler::LLVMTextGen;
+use righton::diagnostics::Diagnostic;
 use righton::lexer::Lexer;
 use righton::llvm;
 use righton::parser;
@@ -34,6 +36,9 @@ struct Cli {
 
     #[clap(long)]
     emit_ir: bool,
+
+    #[clap(long)]
+    error_format: Option<String>,
 }
 
 fn extract_line_col(err: &str) -> Option<(usize, usize)> {
@@ -63,7 +68,15 @@ fn extract_line_col(err: &str) -> Option<(usize, usize)> {
     None
 }
 
-fn format_error(source: &str, err: &str, _is_parse: bool) -> String {
+fn format_error(source: &str, err: &str, _is_parse: bool, error_format: &Option<String>) -> String {
+    if let Some(format) = error_format {
+        if format == "json" {
+            let diag = Diagnostic::error(Some("E0000"), err)
+                .with_span(extract_span(err));
+            return serde_json::to_string_pretty(&diag.to_json()).unwrap_or_else(|_| err.to_string());
+        }
+    }
+    
     let mut result = format!("Error: {}", err);
     if let Some((line, col)) = extract_line_col(err) {
         let line_num = line.saturating_sub(1);
@@ -80,6 +93,12 @@ fn format_error(source: &str, err: &str, _is_parse: bool) -> String {
         }
     }
     result
+}
+
+fn extract_span(err: &str) -> SourceSpan {
+    let line = extract_line_col(err).map(|(l, _)| l).unwrap_or(0);
+    let col = extract_line_col(err).map(|(_, c)| c).unwrap_or(0);
+    SourceSpan::new(line, col)
 }
 
 fn main() {
@@ -135,10 +154,10 @@ fn run() -> Result<(), String> {
     let mut parser = parser::Parser::new(&mut lexer);
     let program = parser
         .parse_program(profile, name.to_string())
-        .map_err(|e| format_error(&code, &e.to_string(), true))?;
+        .map_err(|e| format_error(&code, &e.to_string(), true, &cli.error_format))?;
 
     let mut r#gen = LLVMTextGen::new();
-    let ir = r#gen.generate(&program).map_err(|e| format_error(&code, &e.to_string(), false))?;
+    let ir = r#gen.generate(&program).map_err(|e| format_error(&code, &e.to_string(), false, &cli.error_format))?;
 
     if cli.emit_ir {
         println!("{}", ir);

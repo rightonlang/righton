@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod borrow_checker;
 pub mod compiler;
+pub mod diagnostics;
 pub mod lexer;
 pub mod llvm;
 pub mod parser;
