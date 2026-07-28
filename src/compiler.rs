@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::borrow_checker::BorrowChecker;
+use crate::diagnostics::Diagnostic;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::type_checker::TypeChecker;
@@ -11,13 +12,32 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileError {
     pub message: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
 }
 
 impl CompileError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            line: None,
+            column: None,
         }
+    }
+
+    pub fn with_span(mut self, line: usize, column: usize) -> Self {
+        self.line = Some(line);
+        self.column = Some(column);
+        self
+    }
+
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let span = match (self.line, self.column) {
+            (Some(line), Some(col)) => SourceSpan::new(line, col),
+            (Some(line), None) => SourceSpan::new(line, 0),
+            _ => SourceSpan::unknown(),
+        };
+        Diagnostic::error(Some("E0004"), self.message.clone()).with_span(span)
     }
 }
 
@@ -469,7 +489,15 @@ impl LLVMTextGen {
         let mut parser = Parser::new(&mut lexer);
         let program = parser
             .parse_program("debug".to_string(), module_name)
-            .map_err(|e| CompileError::new(e.to_string()))?;
+            .map_err(|e| {
+                CompileError::new(
+                    e.iter()
+                        .map(|err| err.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .to_string(),
+                )
+            })?;
         let resolved = self.flatten_program_inner(&program, loaded, active)?;
         let prefix_source = path
             .file_stem()

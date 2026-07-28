@@ -88,8 +88,50 @@ impl TypeError {
 
     pub fn to_diagnostic(&self) -> Diagnostic {
         let span = self.line.map(|l| SourceSpan::new(l, 0));
-        Diagnostic::error(Some("E0002"), self.message.clone())
-            .with_span(span.unwrap_or(SourceSpan::unknown()))
+        let diag = Diagnostic::error(Some("E0002"), self.message.clone())
+            .with_span(span.unwrap_or(SourceSpan::unknown()));
+        if let Some(hint) = Self::hint_for_message(&self.message) {
+            diag.with_hint(hint)
+        } else {
+            diag
+        }
+    }
+
+    fn hint_for_message(msg: &str) -> Option<String> {
+        if msg.contains("unknown variable") {
+            return Some("ensure the variable is declared before use".into());
+        }
+        if msg.contains("if condition must be boolean") {
+            return Some("use a comparison like 'x == 1' or a boolean variable".into());
+        }
+        if msg.contains("while condition must be boolean") {
+            return Some("use a comparison like 'x > 0' or a boolean variable".into());
+        }
+        if msg.contains("list index must be an integer") {
+            return Some("use an i32 value as the index".into());
+        }
+        if msg.contains("cannot index into this type") {
+            return Some("only lists and strings support indexing".into());
+        }
+        if msg.contains("cannot assign") {
+            return Some("check that the types match, or remove the type annotation".into());
+        }
+        if msg.contains("all list elements must have the same type") {
+            return Some("mix types by converting explicitly, e.g. to_string()".into());
+        }
+        if msg.contains("all match arms must return the same type") {
+            return Some("ensure every arm returns the same type, or use a common wrapper".into());
+        }
+        if msg.contains("unknown field") {
+            return Some("check the struct definition for available fields".into());
+        }
+        if msg.contains("unknown variant") {
+            return Some("check the enum definition for available variants".into());
+        }
+        if msg.contains("if branches have mismatched types") {
+            return Some("both branches must return the same type".into());
+        }
+        None
     }
 }
 

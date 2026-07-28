@@ -125,10 +125,12 @@ fn run_diagnostics(_uri: &str, text: &str) -> Vec<Value> {
                 diagnostics.push(make_diagnostic(err.to_string(), line, col, 1));
             }
         }
-        Err(err) => {
-            let msg = err.to_string();
-            let (line, col) = extract_line_col(&msg);
-            diagnostics.push(make_diagnostic(msg, line.saturating_sub(1), col, 1));
+        Err(errors) => {
+            for err in &errors {
+                let msg = err.to_string();
+                let (line, col) = extract_line_col(&msg);
+                diagnostics.push(make_diagnostic(msg, line.saturating_sub(1), col, 1));
+            }
         }
     }
     diagnostics

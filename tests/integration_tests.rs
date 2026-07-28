@@ -346,7 +346,7 @@ mod tests {
         ]);
 
         assert!(!result.status.success());
-        assert!(String::from_utf8_lossy(&result.stderr).contains("Error:"));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("error["));
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -1262,7 +1262,7 @@ mod tests {
         assert!(!result.status.success());
         let stderr = String::from_utf8_lossy(&result.stderr);
         assert!(
-            stderr.contains("expected") || stderr.contains("RParen") || stderr.contains("Error:"),
+            stderr.contains("expected") || stderr.contains("RParen") || stderr.contains("error["),
             "Expected parser error, got: {}",
             stderr
         );

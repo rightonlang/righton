@@ -4,7 +4,6 @@ use llvm_sys::target::{
     LLVM_InitializeAllTargets,
 };
 use righton::CompileObjectOptions;
-use righton::ast::SourceSpan;
 use righton::compiler::LLVMTextGen;
 use righton::diagnostics::Diagnostic;
 use righton::lexer::Lexer;
@@ -18,13 +17,16 @@ use std::path::Path;
 struct Cli {
     #[arg(short, long)]
     input: Option<String>,
+
     #[arg(short, long)]
     output: Option<String>,
 
     #[arg(short, long)]
     profile: Option<String>,
+
     #[arg(short, long)]
     target: Option<String>,
+
     #[arg(short, long)]
     cpu: Option<String>,
 
@@ -41,120 +43,102 @@ struct Cli {
     error_format: Option<String>,
 }
 
-fn extract_line_col(err: &str) -> Option<(usize, usize)> {
-    if let Some(start) = err.find("(line=") {
-        let tail = &err[start + 6..];
-        let parts: Vec<&str> = tail.split(&[',', ')'][..]).collect();
-        let line = parts
-            .first()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
-        let col = err
-            .split("col=")
-            .nth(1)
-            .and_then(|s| s.split(&[')', ','][..]).next())
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
-        return Some((line, col));
-    }
-    if let Some(start) = err.find("line ") {
-        let tail = &err[start + 5..];
-        if let Some((line_str, _)) = tail.split_once(':')
-            && let Ok(line) = line_str.trim().parse::<usize>()
-        {
-            return Some((line, 0));
-        }
-    }
-    None
-}
-
-fn format_error(source: &str, err: &str, _is_parse: bool, error_format: &Option<String>) -> String {
-    if let Some(format) = error_format
-        && format == "json"
-    {
-        let diag = Diagnostic::error(Some("E0000"), err).with_span(extract_span(err));
-        return serde_json::to_string_pretty(&diag.to_json()).unwrap_or_else(|_| err.to_string());
-    }
-
-    let mut result = format!("Error: {}", err);
-    if let Some((line, col)) = extract_line_col(err) {
-        let line_num = line.saturating_sub(1);
-        let source_line = source.lines().nth(line_num).unwrap_or("");
-        if !source_line.is_empty() {
-            result.push_str(&format!("\n  {}\n", source_line));
-            let indent = col.min(source_line.len());
-            let caret = if indent > 0 {
-                format!("  {:indent$}^---", "", indent = indent)
-            } else {
-                "  ^---".to_string()
-            };
-            result.push_str(&format!("\n{}\n", caret));
-        }
-    }
-    result
-}
-
-fn extract_span(err: &str) -> SourceSpan {
-    let line = extract_line_col(err).map(|(l, _)| l).unwrap_or(0);
-    let col = extract_line_col(err).map(|(_, c)| c).unwrap_or(0);
-    SourceSpan::new(line, col)
-}
-
 fn main() {
-    if let Err(err) = run() {
-        eprintln!("{}", err);
+    let cli = Cli::parse();
+    if let Err(diagnostics) = run() {
+        for diag in &diagnostics {
+            if cli.error_format.as_deref() == Some("json") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&diag.to_json())
+                        .unwrap_or_else(|_| diag.to_user_message())
+                );
+            } else {
+                eprintln!("{}", diag);
+            }
+        }
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<(), Vec<Diagnostic>> {
     let cli = Cli::parse();
 
     let input_path = match cli.input {
+        Some(ref path) if Path::new(path).exists() => path.clone(),
         Some(path) => {
-            if !Path::new(&path).exists() {
-                return Err(format!("input file '{}' does not exist.", path));
-            }
-            path
+            return Err(vec![Diagnostic::error(
+                Some("E0005"),
+                format!("input file '{}' does not exist.", path),
+            )]);
         }
         None => {
-            return Err("input file not specified. Use -i or --input.".to_string());
+            return Err(vec![Diagnostic::error(
+                Some("E0005"),
+                "input file not specified. Use -i or --input.",
+            )]);
         }
     };
 
     let _name = Path::new(&input_path)
         .file_stem()
         .and_then(|s| s.to_str())
-        .ok_or_else(|| "failed to derive input file stem".to_string())?;
+        .ok_or_else(|| {
+            vec![Diagnostic::error(
+                Some("E0005"),
+                "failed to derive input file stem",
+            )]
+        })?;
 
     let output_path = match cli.output {
         Some(path) => path,
         None => {
-            return Err("output file not specified. Use -o or --output.".to_string());
+            return Err(vec![Diagnostic::error(
+                Some("E0005"),
+                "output file not specified. Use -o or --output.",
+            )]);
         }
     };
 
     let profile = cli.profile.as_deref().unwrap_or("debug").to_lowercase();
     if profile != "debug" && profile != "release" {
-        return Err("profile must be either 'debug' or 'release'.".to_string());
+        return Err(vec![Diagnostic::error(
+            Some("E0005"),
+            "profile must be either 'debug' or 'release'.",
+        )]);
     }
 
-    let code = fs::read_to_string(&input_path).map_err(|e| e.to_string())?;
+    let code = fs::read_to_string(&input_path).map_err(|e| {
+        vec![Diagnostic::error(
+            Some("E0005"),
+            format!("failed to read input file: {}", e),
+        )]
+    })?;
     let name = Path::new(&input_path)
         .file_stem()
         .and_then(|s| s.to_str())
-        .ok_or_else(|| "failed to derive input file stem".to_string())?;
+        .ok_or_else(|| {
+            vec![Diagnostic::error(
+                Some("E0005"),
+                "failed to derive input file stem",
+            )]
+        })?;
 
     let mut lexer = Lexer::new(&code);
     let mut parser = parser::Parser::new(&mut lexer);
-    let program = parser
-        .parse_program(profile, name.to_string())
-        .map_err(|e| format_error(&code, &e.to_string(), true, &cli.error_format))?;
+    let program = match parser.parse_program(profile, name.to_string()) {
+        Ok(program) => program,
+        Err(errors) => {
+            let diags: Vec<Diagnostic> = errors.into_iter().map(|e| e.to_diagnostic()).collect();
+            return Err(diags);
+        }
+    };
 
     let mut r#gen = LLVMTextGen::new();
-    let ir = r#gen
-        .generate(&program)
-        .map_err(|e| format_error(&code, &e.to_string(), false, &cli.error_format))?;
+    let ir = match r#gen.generate(&program) {
+        Ok(ir) => ir,
+        Err(e) => return Err(vec![e.to_diagnostic()]),
+    };
 
     if cli.emit_ir {
         println!("{}", ir);
@@ -174,10 +158,15 @@ fn run() -> Result<(), String> {
             codegen_level: cli.codegen_level.clone(),
         };
         llvm::compile_object(&options, ir.clone(), output_path.clone(), name.to_string())
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| vec![Diagnostic::error(Some("E0004"), e)])?;
         eprintln!("object saved to {}", output_path);
     } else {
-        fs::write(&output_path, &ir).map_err(|e| e.to_string())?;
+        fs::write(&output_path, &ir).map_err(|e| {
+            vec![Diagnostic::error(
+                Some("E0005"),
+                format!("failed to write output: {}", e),
+            )]
+        })?;
         eprintln!("LLVM IR saved to {}", output_path);
     }
 
