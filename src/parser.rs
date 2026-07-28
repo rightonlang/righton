@@ -32,7 +32,60 @@ impl ParseError {
         } else {
             SourceSpan::unknown()
         };
-        Diagnostic::error(Some("E0001"), self.message.clone()).with_span(span)
+        let diag = Diagnostic::error(Some("E0001"), self.message.clone()).with_span(span);
+        if let Some(hint) = Self::hint_for_message(&self.message) {
+            diag.with_hint(hint)
+        } else {
+            diag
+        }
+    }
+
+    fn hint_for_message(msg: &str) -> Option<String> {
+        if msg.contains("expected name after borrow operator") {
+            return Some("add a variable name after '&' or '&mut'".into());
+        }
+        if msg.contains("expected variable name after 'for'") {
+            return Some("write: for i in range:".into());
+        }
+        if msg.contains("expected name of the function") {
+            return Some("function declarations must start with 'fn name(...)'".into());
+        }
+        if msg.contains("expected name of the external function") {
+            return Some("extern functions must start with 'extern fn name(...)'".into());
+        }
+        if msg.contains("expected name of the struct") {
+            return Some("struct declarations must start with 'struct Name:'".into());
+        }
+        if msg.contains("expected name of the enum") {
+            return Some("enum declarations must start with 'enum Name:'".into());
+        }
+        if msg.contains("expected name for type alias") {
+            return Some("type aliases must start with 'type Name = ExistingType'".into());
+        }
+        if msg.contains("expected type value for type alias") {
+            return Some("provide a type after '='".into());
+        }
+        if msg.contains("expected struct name for impl block") {
+            return Some("impl blocks must start with 'impl StructName:'".into());
+        }
+        if msg.contains("expected name of the variable") {
+            return Some("variable declarations must start with 'let name' or 'const name'".into());
+        }
+        if msg.contains("expected type after ':'") {
+            return Some("add a type annotation like ': i32' or ': str'".into());
+        }
+        if msg.contains("expected type annotation") {
+            return Some("add a type after the parameter name".into());
+        }
+        if msg.contains("unknown symbol") {
+            return Some("check for typos or missing operators".into());
+        }
+        if msg.contains("expected define of the function or expression") {
+            return Some(
+                "top-level items must be functions, structs, enums, or expressions".into(),
+            );
+        }
+        None
     }
 }
 
@@ -57,6 +110,7 @@ pub struct Parser<'a> {
     lexer: &'a mut Lexer,
     current: Option<TokenKind>,
     current_col: usize,
+    errors: Vec<ParseError>,
 }
 
 impl<'a> Parser<'a> {
@@ -67,7 +121,94 @@ impl<'a> Parser<'a> {
             lexer,
             current: Some(first.kind),
             current_col: col,
+            errors: Vec::new(),
         }
+    }
+
+    pub fn into_errors(self) -> Vec<ParseError> {
+        self.errors
+    }
+
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    fn record_error(&mut self, err: ParseError) {
+        self.errors.push(err);
+    }
+
+    fn synchronize(&mut self) {
+        while self.current != Some(TokenKind::Eof) {
+            if self.current == Some(TokenKind::Newline) {
+                self.advance();
+                while self.current == Some(TokenKind::Newline) {
+                    self.advance();
+                }
+                if self.is_sync_token() {
+                    return;
+                }
+            } else if self.is_sync_token() {
+                return;
+            } else {
+                self.advance();
+            }
+        }
+    }
+
+    fn synchronize_block(&mut self, block_indent: usize) {
+        while self.current != Some(TokenKind::Eof) {
+            if self.current == Some(TokenKind::Newline) {
+                self.advance();
+                while self.current == Some(TokenKind::Newline) {
+                    self.advance();
+                }
+                if self.current == Some(TokenKind::Eof) || self.current_col <= block_indent {
+                    return;
+                }
+                if self.is_block_sync_token() {
+                    return;
+                }
+            } else if self.is_block_sync_token() || self.current == Some(TokenKind::Eof) {
+                return;
+            } else {
+                self.advance();
+            }
+        }
+    }
+
+    fn is_sync_token(&self) -> bool {
+        matches!(
+            self.current,
+            Some(TokenKind::Fn)
+                | Some(TokenKind::Struct)
+                | Some(TokenKind::Enum)
+                | Some(TokenKind::Type)
+                | Some(TokenKind::Impl)
+                | Some(TokenKind::Import)
+                | Some(TokenKind::Extern)
+                | Some(TokenKind::Eof)
+                | Some(TokenKind::Newline)
+        )
+    }
+
+    fn is_block_sync_token(&self) -> bool {
+        matches!(
+            self.current,
+            Some(TokenKind::Fn)
+                | Some(TokenKind::Let)
+                | Some(TokenKind::Const)
+                | Some(TokenKind::Return)
+                | Some(TokenKind::If)
+                | Some(TokenKind::While)
+                | Some(TokenKind::For)
+                | Some(TokenKind::Match)
+                | Some(TokenKind::Break)
+                | Some(TokenKind::Continue)
+                | Some(TokenKind::Else)
+                | Some(TokenKind::Elif)
+                | Some(TokenKind::Eof)
+                | Some(TokenKind::Newline)
+        )
     }
 
     fn advance(&mut self) {
@@ -247,10 +388,11 @@ impl<'a> Parser<'a> {
                 self.lexer.line,
                 self.lexer.column,
             )),
-            _ => Err(ParseError::new(format!(
-                "expected primary expression, found {:?} (line={}, col={})",
-                self.current, self.lexer.line, self.lexer.column
-            ))),
+            _ => Err(ParseError::with_location(
+                "expected primary expression, found unexpected token",
+                self.lexer.line,
+                self.lexer.column,
+            )),
         }
     }
 
@@ -400,7 +542,11 @@ impl<'a> Parser<'a> {
         Ok(Expr::Import(spec, span))
     }
 
-    pub fn parse_program(&mut self, profile: String, name: String) -> Result<Program, ParseError> {
+    pub fn parse_program(
+        &mut self,
+        profile: String,
+        name: String,
+    ) -> Result<Program, Vec<ParseError>> {
         let mut functions = Vec::new();
         let mut globals = Vec::new();
         let mut structs = Vec::new();
@@ -418,13 +564,55 @@ impl<'a> Parser<'a> {
             }
 
             match self.current.clone() {
-                Some(TokenKind::Import) => globals.push(self.parse_import_stmt()?),
-                Some(TokenKind::Struct) => structs.push(self.parse_struct_def()?),
-                Some(TokenKind::Enum) => enums.push(self.parse_enum_def()?),
-                Some(TokenKind::Type) => type_aliases.push(self.parse_type_alias()?),
-                Some(TokenKind::Fn) => functions.push(self.parse_function()?),
-                Some(TokenKind::Extern) => functions.push(self.parse_extern_function()?),
-                Some(TokenKind::Impl) => impls.push(self.parse_impl_def()?),
+                Some(TokenKind::Import) => match self.parse_import_stmt() {
+                    Ok(expr) => globals.push(expr),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
+                Some(TokenKind::Struct) => match self.parse_struct_def() {
+                    Ok(s) => structs.push(s),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
+                Some(TokenKind::Enum) => match self.parse_enum_def() {
+                    Ok(e) => enums.push(e),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
+                Some(TokenKind::Type) => match self.parse_type_alias() {
+                    Ok(t) => type_aliases.push(t),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
+                Some(TokenKind::Fn) => match self.parse_function() {
+                    Ok(f) => functions.push(f),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
+                Some(TokenKind::Extern) => match self.parse_extern_function() {
+                    Ok(f) => functions.push(f),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
+                Some(TokenKind::Impl) => match self.parse_impl_def() {
+                    Ok(i) => impls.push(i),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
                 Some(TokenKind::Let)
                 | Some(TokenKind::Const)
                 | Some(TokenKind::Identifier(_))
@@ -445,36 +633,47 @@ impl<'a> Parser<'a> {
                 | Some(TokenKind::Match)
                 | Some(TokenKind::Return)
                 | Some(TokenKind::EqualEqual)
-                | Some(TokenKind::FString(_)) => {
-                    globals.push(self.parse_expr()?);
-                }
+                | Some(TokenKind::FString(_)) => match self.parse_expr() {
+                    Ok(expr) => globals.push(expr),
+                    Err(err) => {
+                        self.record_error(err);
+                        self.synchronize();
+                    }
+                },
                 Some(TokenKind::Invalid(ch)) => {
-                    return Err(ParseError::with_location(
+                    self.record_error(ParseError::with_location(
                         format!("unknown symbol '{}'", ch),
                         self.lexer.line,
                         self.lexer.column,
                     ));
+                    self.advance();
                 }
                 Some(_tok) => {
-                    return Err(ParseError::new(format!(
-                        "expected define of the function or expression, but found {:?} (line={}, col={})",
-                        _tok, self.lexer.line, self.lexer.column
-                    )));
+                    self.record_error(ParseError::with_location(
+                        "expected define of the function or expression, but found unexpected token",
+                        self.lexer.line,
+                        self.lexer.column,
+                    ));
+                    self.synchronize();
                 }
                 None => break,
             }
         }
 
-        Ok(Program {
-            globals,
-            functions,
-            structs,
-            enums,
-            type_aliases,
-            impls,
-            profile,
-            name,
-        })
+        if self.errors.is_empty() {
+            Ok(Program {
+                globals,
+                functions,
+                structs,
+                enums,
+                type_aliases,
+                impls,
+                profile,
+                name,
+            })
+        } else {
+            Err(self.errors.clone())
+        }
     }
 
     fn parse_block(&mut self) -> Result<Block, ParseError> {
@@ -504,7 +703,11 @@ impl<'a> Parser<'a> {
                     | Some(TokenKind::Elif)
                     | Some(TokenKind::Eof)
                     | Some(TokenKind::Fn) => {
-                        return Ok(Block { stmts });
+                        return if self.errors.is_empty() {
+                            Ok(Block { stmts })
+                        } else {
+                            Err(self.errors[0].clone())
+                        };
                     }
                     _ => {}
                 }
@@ -523,11 +726,20 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
 
-            let expr = self.parse_expr()?;
-            stmts.push(expr);
+            match self.parse_expr() {
+                Ok(expr) => stmts.push(expr),
+                Err(err) => {
+                    self.record_error(err);
+                    self.synchronize_block(block_indent);
+                }
+            }
         }
 
-        Ok(Block { stmts })
+        if self.errors.is_empty() {
+            Ok(Block { stmts })
+        } else {
+            Err(self.errors[self.errors.len() - 1].clone())
+        }
     }
 
     fn parse_function(&mut self) -> Result<FunctionDef, ParseError> {
@@ -667,10 +879,11 @@ impl<'a> Parser<'a> {
                     Ok(type_name)
                 }
             }
-            Some(tok) => Err(ParseError::new(format!(
-                "expected type annotation but found {:?} (line={}, col={})",
-                tok, self.lexer.line, self.lexer.column
-            ))),
+            Some(tok) => Err(ParseError::with_location(
+                format!("expected type annotation but found {:?}", tok),
+                self.lexer.line,
+                self.lexer.column,
+            )),
             None => Err(ParseError::new("expected type annotation")),
         }
     }
@@ -862,10 +1075,11 @@ impl<'a> Parser<'a> {
                     Some(TokenKind::And) => BinOp::And,
                     Some(TokenKind::Or) => BinOp::Or,
                     _ => {
-                        return Err(ParseError::new(format!(
-                            "unknown operator: {:?} (line={}, col={})",
-                            op_opt, self.lexer.line, self.lexer.column
-                        )));
+                        return Err(ParseError::with_location(
+                            "unknown operator",
+                            self.lexer.line,
+                            self.lexer.column,
+                        ));
                     }
                 }
             };
@@ -1056,10 +1270,11 @@ impl<'a> Parser<'a> {
                                     self.advance();
                                     v
                                 } else {
-                                    return Err(ParseError::new(format!(
-                                        "expected variant name after '::' (line={}, col={})",
-                                        self.lexer.line, self.lexer.column
-                                    )));
+                                    return Err(ParseError::with_location(
+                                        "expected variant name after '::'",
+                                        self.lexer.line,
+                                        self.lexer.column,
+                                    ));
                                 };
                             let mut args = Vec::new();
                             if self.current == Some(TokenKind::LParen) {
@@ -1281,10 +1496,11 @@ impl<'a> Parser<'a> {
                             }
                         }
                         _ => {
-                            return Err(ParseError::new(format!(
-                                "expected field name or tuple index after '.' (line={}, col={})",
-                                self.lexer.line, self.lexer.column
-                            )));
+                            return Err(ParseError::with_location(
+                                "expected field name or tuple index after '.'",
+                                self.lexer.line,
+                                self.lexer.column,
+                            ));
                         }
                     }
                 }
@@ -1302,10 +1518,11 @@ impl<'a> Parser<'a> {
 
                 self.parse_binary(left, 0)
             }
-            _ => Err(ParseError::new(format!(
-                "unexpected token in expression: {:?} (line={}, col={})",
-                self.current, self.lexer.line, self.lexer.column
-            ))),
+            _ => Err(ParseError::with_location(
+                "unexpected token in expression",
+                self.lexer.line,
+                self.lexer.column,
+            )),
         }
     }
 
@@ -1661,11 +1878,12 @@ line2""""#,
     fn test_parse_invalid_symbol_reports_location() {
         let mut lexer = Lexer::new("@");
         let mut parser = Parser::new(&mut lexer);
-        let err = parser
+        let errors = parser
             .parse_program("debug".to_string(), "test".to_string())
             .unwrap_err();
-        assert!(err.to_string().contains("unknown symbol '@'"));
-        assert!(err.to_string().contains("line=1"));
+        assert!(!errors.is_empty());
+        assert!(errors[0].to_string().contains("unknown symbol '@'"));
+        assert!(errors[0].to_string().contains("line=1"));
     }
 
     #[test]
@@ -1673,5 +1891,24 @@ line2""""#,
         let program = parse("");
         assert_eq!(program.globals.len(), 0);
         assert_eq!(program.functions.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_recovery_collects_multiple_errors() {
+        let input = "fn foo(x:\n    return x + 1\n\nfn bar(y):\n    return y * 2";
+        let mut lexer = Lexer::new(input);
+        let mut parser = Parser::new(&mut lexer);
+        let result = parser.parse_program("debug".to_string(), "test".to_string());
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        eprintln!("Recovery test errors: {}", errors.len());
+        for e in &errors {
+            eprintln!("  {} (line={}, col={})", e.message, e.line, e.column);
+        }
+        assert!(
+            errors.len() >= 1,
+            "expected at least 1 error, got {}",
+            errors.len()
+        );
     }
 }

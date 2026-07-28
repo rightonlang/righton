@@ -15,7 +15,25 @@ impl BorrowCheckError {
     }
 
     pub fn to_diagnostic(&self) -> Diagnostic {
-        Diagnostic::error(Some("E0003"), self.message.clone())
+        let diag = Diagnostic::error(Some("E0003"), self.message.clone());
+        if let Some(hint) = Self::hint_for_message(&self.message) {
+            diag.with_hint(hint)
+        } else {
+            diag
+        }
+    }
+
+    fn hint_for_message(msg: &str) -> Option<String> {
+        if msg.contains("already borrowed") {
+            return Some("avoid using the borrowed value while the borrow is active".into());
+        }
+        if msg.contains("use of moved value") {
+            return Some("clone the value before moving, or pass by reference".into());
+        }
+        if msg.contains("cannot borrow") {
+            return Some("the value may not live long enough; consider restructuring".into());
+        }
+        None
     }
 }
 
