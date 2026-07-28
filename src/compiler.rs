@@ -97,6 +97,12 @@ pub struct LLVMTextGen {
     type_aliases: HashMap<String, String>,
 }
 
+impl Default for LLVMTextGen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LLVMTextGen {
     pub fn new() -> Self {
         Self {
@@ -143,7 +149,7 @@ impl LLVMTextGen {
             .map_err(|e| CompileError::new(e.to_string()))?;
 
         let mut ir = String::new();
-        if !(program.profile == "release") {
+        if program.profile != "release"  {
             ir.push_str(format!("; ModuleID = 'righton_{}'\n", program.name).as_str());
         } else {
             ir.push_str(format!("; ModuleID = '{}'\n", program.name).as_str());
@@ -659,8 +665,8 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
             }
 
             // 2) try executable-relative path (next to the exe or in an adjacent `stdlib` folder)
-            if let Ok(exe_path) = std::env::current_exe() {
-                if let Some(dir) = exe_path.parent() {
+            if let Ok(exe_path) = std::env::current_exe()
+                && let Some(dir) = exe_path.parent() {
                     let candidate = dir.join("stdlib").join("std.ro");
                     if candidate.exists() {
                         return candidate;
@@ -670,7 +676,6 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                         return candidate2;
                     }
                 }
-            }
 
             // 3) try current working directory
             let cwd_candidate = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("stdlib").join("std.ro");
@@ -975,7 +980,7 @@ writeln!(
                         Type::Ptr => "i8*",
                         _ => "i8*",
                     }
-                } else if params.contains(&name) {
+                } else if params.contains(name) {
                     if let Some((typ, _, _)) = locals.get(name) {
                         match typ {
                             Type::I32 => "i32",
@@ -1011,16 +1016,14 @@ writeln!(
                 if matches!(l.as_ref(), Expr::Literal(Literal::Bool(_), _)) || matches!(r.as_ref(), Expr::Literal(Literal::Bool(_), _)) {
                     return "i32";
                 }
-                if let Expr::Identifier(ln, _) = l.as_ref() {
-                    if let Some((Type::F64, _, _)) = locals.get(ln) {
+                if let Expr::Identifier(ln, _) = l.as_ref()
+                    && let Some((Type::F64, _, _)) = locals.get(ln) {
                         return "double";
                     }
-                }
-                if let Expr::Identifier(rn, _) = r.as_ref() {
-                    if let Some((Type::F64, _, _)) = locals.get(rn) {
+                if let Expr::Identifier(rn, _) = r.as_ref()
+                    && let Some((Type::F64, _, _)) = locals.get(rn) {
                         return "double";
                     }
-                }
                 let lt = self.infer_expr_type(l, params, locals);
                 let rt = self.infer_expr_type(r, params, locals);
                 if lt == "double" || rt == "double" {
@@ -1074,11 +1077,10 @@ writeln!(
     }
 
     fn infer_return_type(&self, body: &[Expr], params: &[String]) -> &'static str {
-        if let Some(name) = &self.current_function {
-            if name == "main" {
+        if let Some(name) = &self.current_function
+            && name == "main" {
                 return "i32";
             }
-        }
         let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
         for (i, p) in params.iter().enumerate() {
             let param_type = self.infer_param_type(body, p, params);
@@ -1232,7 +1234,7 @@ writeln!(
             Type::Struct(name) => format!("struct_{}", name),
             Type::Enum(name) => format!("enum_{}", name),
             Type::Tuple(types) => {
-                let inner = types.iter().map(|t| Self::type_to_mangled_suffix(t)).collect::<Vec<_>>().join("_");
+                let inner = types.iter().map(Self::type_to_mangled_suffix).collect::<Vec<_>>().join("_");
                 format!("tuple_{}", inner)
             }
             Type::Void => "void".to_string(),
@@ -1257,7 +1259,7 @@ writeln!(
             type_map.insert(param.clone(), typ.clone());
         }
 
-        let suffix = concrete_types.iter().map(|t| Self::type_to_mangled_suffix(t)).collect::<Vec<_>>().join("_");
+        let suffix = concrete_types.iter().map(Self::type_to_mangled_suffix).collect::<Vec<_>>().join("_");
         let mangled_name = format!("{}_{}", func.name, suffix);
 
         if self.monomorphized.contains_key(&mangled_name) {
@@ -1319,11 +1321,11 @@ writeln!(
                     Box::new(self.substitute_expr_generics(l, type_map)?),
                     op.clone(),
                     Box::new(self.substitute_expr_generics(r, type_map)?),
-                    span.clone(),
+                    *span,
                 ))
             }
             Expr::Unary(op, inner, span) => {
-                Ok(Expr::Unary(op.clone(), Box::new(self.substitute_expr_generics(inner, type_map)?), span.clone()))
+                Ok(Expr::Unary(op.clone(), Box::new(self.substitute_expr_generics(inner, type_map)?), *span))
             }
             Expr::Return(inner, span) => {
                 Ok(Expr::Return(Box::new(self.substitute_expr_generics(inner, type_map)?), *span))
@@ -1517,8 +1519,8 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 break;
             }
             for e in body {
-                if let Expr::Let { name, typ: _, value, is_const: _ } = e {
-                    if name == p {
+                if let Expr::Let { name, typ: _, value, is_const: _ } = e
+                    && name == p {
                         let inferred = self.infer_expr_type(value, known_params, &temp_locals);
                         let t = match inferred {
                             "i32" => Type::I32,
@@ -1528,14 +1530,13 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                         temp_locals.insert(p.to_string(), (t, format!("arg{}", i), false));
                         break;
                     }
-                }
             }
         }
         
         // Second: look for let binding of the CURRENT param
         for expr in body {
-            if let Expr::Let { name, typ, value, is_const: _ } = expr {
-                if name == param {
+            if let Expr::Let { name, typ, value, is_const: _ } = expr
+                && name == param {
                     if let Some(t) = typ {
                         let resolved = self.resolve_type_name(t);
                         match resolved.as_str() {
@@ -1552,7 +1553,6 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                         _ => Type::Ptr,
                     };
                 }
-            }
         }
         
         // Helper: get expected param type for a function
@@ -1584,11 +1584,10 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                                         return true;
                                     }
                                 }
-                            } else if let Expr::Call { .. } = arg {
-                                if check_expr(arg, param, stdlib_enabled, visited, pt) {
+                            } else if let Expr::Call { .. } = arg
+                                && check_expr(arg, param, stdlib_enabled, visited, pt) {
                                     return true;
                                 }
-                            }
                         }
                         if !visited.contains(func) {
                             visited.push(func.to_string());
@@ -1619,18 +1618,15 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 Expr::Call { func, args } => {
                     for (i, arg) in args.iter().enumerate() {
                         if let Expr::Identifier(n, _) = arg {
-                            if n == param {
-                                if let Some(expected) = pt(func, i) {
-                                    if expected == "i32" {
+                            if n == param
+                                && let Some(expected) = pt(func, i)
+                                    && expected == "i32" {
                                         return true;
                                     }
-                                }
-                            }
-                        } else if let Expr::Call { .. } = arg {
-                            if check_int_context(arg, param, pt) {
+                        } else if let Expr::Call { .. } = arg
+                            && check_int_context(arg, param, pt) {
                                 return true;
                             }
-                        }
                     }
                     false
                 }
@@ -1648,18 +1644,15 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 Expr::Call { func, args } => {
                     for (i, arg) in args.iter().enumerate() {
                         if let Expr::Identifier(n, _) = arg {
-                            if n == param {
-                                if let Some(expected) = pt(func, i) {
-                                    if expected == "double" {
+                            if n == param
+                                && let Some(expected) = pt(func, i)
+                                    && expected == "double" {
                                         return true;
                                     }
-                                }
-                            }
-                        } else if let Expr::Call { .. } = arg {
-                            if check_float_context(arg, param, pt) {
+                        } else if let Expr::Call { .. } = arg
+                            && check_float_context(arg, param, pt) {
                                 return true;
                             }
-                        }
                     }
                     false
                 }
@@ -1675,8 +1668,8 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
         fn param_in_binary(expr: &Expr, param: &str) -> bool {
             match expr {
                 Expr::Binary(l, _, r, _) => {
-                    if let Expr::Identifier(n, _) = l.as_ref() { if n == param { return true; } }
-                    if let Expr::Identifier(n, _) = r.as_ref() { if n == param { return true; } }
+                    if let Expr::Identifier(n, _) = l.as_ref() && n == param { return true; }
+                    if let Expr::Identifier(n, _) = r.as_ref() && n == param { return true; }
                     param_in_binary(l, param) || param_in_binary(r, param)
                 }
                 Expr::If { condition, then_branch, else_branch } => {
@@ -1724,7 +1717,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
         locals: &mut HashMap<String, (Type, String, bool)>,
         return_ty: &str,
     ) -> CompileResult<bool> {
-        let last_is_return = stmts.iter().last().map_or(false, |s| matches!(s, Expr::Return(_, _)));
+        let last_is_return = stmts.iter().last().is_some_and(|s| matches!(s, Expr::Return(_, _)));
         for stmt in stmts {
             self.generate_expr(stmt, params, locals, return_ty)?;
         }
@@ -2437,8 +2430,8 @@ Expr::Return(inner, _) => {
                 } else { None };
                 let mut offset = 0i32;
                 let mut field_typ = "i32".to_string();
-                if let Some(ref name) = target_name {
-                    if let Some(sdef) = struct_defs.iter().find(|_s| {
+                if let Some(ref name) = target_name
+                    && let Some(sdef) = struct_defs.iter().find(|_s| {
                         locals.contains_key(name)
                     }) {
                         for sf in &sdef.fields {
@@ -2453,7 +2446,6 @@ Expr::Return(inner, _) => {
                             };
                         }
                     }
-                }
                 let elem_ptr = self.next_temp();
                 writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
                 match field_typ.as_str() {
@@ -3130,8 +3122,8 @@ Expr::Return(inner, _) => {
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
                 } else { None };
-                if let Some(ref name) = target_name {
-                    if let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
+                if let Some(ref name) = target_name
+                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
                         for sf in &sdef.fields {
                             if sf.name == *field {
                                 field_type = sf.typ.clone();
@@ -3144,7 +3136,6 @@ Expr::Return(inner, _) => {
                             };
                         }
                     }
-                }
                 if field_type == "i32" || field_type == "bool" {
                     let elem_ptr = self.next_temp();
                     writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
@@ -3337,8 +3328,8 @@ Expr::Return(inner, _) => {
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
                 } else { None };
-                if let Some(ref name) = target_name {
-                    if let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
+                if let Some(ref name) = target_name
+                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
                         for sf in &sdef.fields {
                             if sf.name == *field {
                                 field_type = sf.typ.clone();
@@ -3351,7 +3342,6 @@ Expr::Return(inner, _) => {
                             };
                         }
                     }
-                }
                 if field_type == "f64" || field_type == "float" || field_type == "double" {
                     let elem_ptr = self.next_temp();
                     writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
@@ -3702,9 +3692,9 @@ Expr::Return(inner, _) => {
                 // Store payload at offset 4
                 let mut offset = 4i32;
                 for (i, arg) in args.iter().enumerate() {
-                    if let Some(e) = edef {
-                        if let Some(v) = e.variants.iter().find(|v| v.name == *variant_name) {
-                            if i < v.fields.len() {
+                    if let Some(e) = edef
+                        && let Some(v) = e.variants.iter().find(|v| v.name == *variant_name)
+                            && i < v.fields.len() {
                                 let ft = &v.fields[i];
                                 let elem_ptr = self.next_temp();
                                 writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, malloc_reg, offset).unwrap();
@@ -3733,8 +3723,6 @@ Expr::Return(inner, _) => {
                                     }
                                 }
                             }
-                        }
-                    }
                 }
                 writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
             }
@@ -3792,8 +3780,8 @@ Expr::Return(inner, _) => {
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
                 } else { None };
-                if let Some(ref name) = target_name {
-                    if let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
+                if let Some(ref name) = target_name
+                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
                         for sf in &sdef.fields {
                             if sf.name == *field {
                                 field_type = sf.typ.clone();
@@ -3806,7 +3794,6 @@ Expr::Return(inner, _) => {
                             };
                         }
                     }
-                }
                 if field_type == "i8*" || field_type == "string" || field_type == "str" || field_type == "ptr" {
                     let elem_ptr = self.next_temp();
                     writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
@@ -3952,10 +3939,10 @@ Expr::Return(inner, _) => {
             })?;
 
         let mut call_resolved = resolved.clone();
-        if let Some(func_def) = self.find_function_def(&resolved) {
-            if !func_def.generic_params.is_empty() {
+        if let Some(func_def) = self.find_function_def(&resolved)
+            && !func_def.generic_params.is_empty() {
                 let mut concrete_types = Vec::new();
-                for (i, arg) in args.iter().enumerate() {
+                for arg in args.iter() {
                     let arg_type = self.infer_expr_type(arg, params, locals);
                     let concrete = match arg_type {
                         "i32" => Type::I32,
@@ -3969,7 +3956,6 @@ Expr::Return(inner, _) => {
                 let mangled = self.monomorphize_function(&func_def.clone(), &concrete_types)?;
                 call_resolved = mangled;
             }
-        }
 
         let param_types = self.get_function_param_types(func);
         let mut call_args = Vec::new();
@@ -4390,7 +4376,7 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "}}\n").unwrap();
 
         // Bounds check panic
-        let bounds_msg = self.emit_string_const("list index out of bounds");
+        let _bounds_msg = self.emit_string_const("list index out of bounds");
         writeln!(
             &mut helpers,
             "define void @__rt_panic_bounds(i8* %msg) {{"
@@ -4589,7 +4575,7 @@ Expr::Return(inner, _) => {
                         }
                     }
                 } else if let Some(idx) = params.iter().position(|p| p == name) {
-                    constraints.push_str("r");
+                    constraints.push('r');
                     operands.push_str(&format!("i8* %arg{}", idx));
                 } else {
                     return Err(CompileError::new(format!(

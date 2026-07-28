@@ -114,8 +114,7 @@ fn extract_line_col(msg: &str) -> (usize, usize) {
     if let Some(start) = msg.find("(line=") {
         let tail = &msg[start + 6..];
         let parts: Vec<&str> = tail.split(&[',', ')'][..]).collect();
-        let line = parts
-            .get(0)
+        let line = parts.first()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
         let col = msg
@@ -128,11 +127,10 @@ fn extract_line_col(msg: &str) -> (usize, usize) {
     }
     if let Some(start) = msg.find("line ") {
         let tail = &msg[start + 5..];
-        if let Some((line_str, _)) = tail.split_once(':') {
-            if let Ok(line) = line_str.trim().parse::<usize>() {
+        if let Some((line_str, _)) = tail.split_once(':')
+            && let Ok(line) = line_str.trim().parse::<usize>() {
                 return (line, 0);
             }
-        }
     }
     (0, 0)
 }
@@ -219,12 +217,11 @@ fn get_word_at(line: &str, character: usize) -> Option<String> {
     let mut start = character;
     let mut end = character;
     while start > 0 {
-        if let Some(ch) = line[..start].chars().rev().next() {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
+        if let Some(ch) = line[..start].chars().next_back()
+            && (ch.is_ascii_alphanumeric() || ch == '_') {
                 start = start.saturating_sub(ch.len_utf8());
                 continue;
             }
-        }
         break;
     }
     while let Some(ch) = line[end..].chars().next() {
@@ -241,7 +238,7 @@ fn get_word_at(line: &str, character: usize) -> Option<String> {
 fn get_word_prefix(line: &str, character: usize) -> String {
     let mut start = character;
     while start > 0 {
-        let prev = line[..start].chars().rev().next();
+        let prev = line[..start].chars().next_back();
         match prev {
             Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' => start -= ch.len_utf8(),
             _ => break,

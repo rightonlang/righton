@@ -18,14 +18,13 @@ pub enum Type {
 
 impl Type {
     pub fn from_str(s: &str) -> Self {
-        if let Some(open) = s.find('[') {
-            if s.ends_with(']') {
+        if let Some(open) = s.find('[')
+            && s.ends_with(']') {
                 let base = &s[..open];
                 let args_str = &s[open + 1..s.len() - 1];
                 let args: Vec<Type> = args_str.split(',').map(|a| Type::from_str(a.trim())).collect();
                 return Type::Struct(base.to_string(), args);
             }
-        }
         match s {
             "i32" => Type::I32,
             "f64" | "float" | "double" => Type::F64,
@@ -156,11 +155,10 @@ impl TypeEnv {
     }
 
     fn resolve_type(&self, s: &str, self_struct: Option<&str>) -> Type {
-        if s == "Self" {
-            if let Some(struct_name) = self_struct {
+        if s == "Self"
+            && let Some(struct_name) = self_struct {
                 return Type::Struct(struct_name.to_string(), Vec::new());
             }
-        }
         if let Some(typ) = self.generics.get(s) {
             return typ.clone();
         }
@@ -185,6 +183,12 @@ pub struct TypeChecker {
     stdlib_enabled: bool,
     function_aliases: HashMap<String, String>,
     self_struct_type: Option<String>,
+}
+
+impl Default for TypeChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TypeChecker {
@@ -219,7 +223,7 @@ impl TypeChecker {
             }
         }
 
-        self.resolve_function_types(&program)?;
+        self.resolve_function_types(program)?;
 
         // Check impl methods
         for func in &program.functions {
@@ -238,21 +242,20 @@ impl TypeChecker {
 
     fn register_globals(&mut self, globals: &[Expr]) -> TypeResult<()> {
         for global in globals {
-            let _ = match global {
+            match global {
                 Expr::Import(_, _) => {}
             Expr::Let { name, typ, value, is_const: _ } => {
                 let value_type = self.infer_expr(value)?;
                 let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
 
-                if let Some(expected) = &annotated {
-                        if !self.types_compatible(&value_type, expected) {
+                if let Some(expected) = &annotated
+                        && !self.types_compatible(&value_type, expected) {
                             return Err(TypeError::new(format!(
                                 "cannot assign {} to variable of type {}",
                                 self.type_name(&value_type),
                                 self.type_name(expected)
                             )));
                         }
-                    }
 
                     let final_type = annotated.unwrap_or(value_type);
                     self.env.insert_global(name.clone(), final_type);
@@ -369,14 +372,13 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
 
         let mut param_types = Vec::new();
         for expr in &func.body {
-            if let Expr::Let { name, typ, value, is_const: _ } = expr {
-                if func.params.contains(name) {
+            if let Expr::Let { name, typ, value, is_const: _ } = expr
+                && func.params.contains(name) {
                     let value_type = self.infer_expr(value)?;
                     let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
                     let final_type = annotated.unwrap_or(value_type);
                     param_types.push(final_type);
                 }
-            }
         }
 
         for (i, param) in func.params.iter().enumerate() {
@@ -500,15 +502,14 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 let value_type = self.infer_expr(value)?;
                 let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
 
-                if let Some(expected) = &annotated {
-                    if !self.types_compatible(&value_type, expected) {
+                if let Some(expected) = &annotated
+                    && !self.types_compatible(&value_type, expected) {
                         return Err(TypeError::new(format!(
                             "cannot assign {} to variable of type {}",
                             self.type_name(&value_type),
                             self.type_name(expected)
                         )));
                     }
-                }
 
                 let final_type = annotated.unwrap_or(value_type);
                 self.env.insert_local(name.clone(), final_type);
@@ -625,11 +626,10 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
             Expr::FieldAccess { target, field } => {
                 let target_type = self.infer_expr(target)?;
                 if let Type::Struct(struct_name, _) = &target_type {
-                    if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name) {
-                        if let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
+                    if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
+                        && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
                             return Ok(Type::from_str(&sf.typ));
                         }
-                    }
                     return Err(TypeError::new(format!("unknown field: {}", field)));
                 }
                 Err(TypeError::new("field access on non-struct type"))
@@ -638,8 +638,8 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 let target_type = self.infer_expr(target)?;
                 let value_type = self.infer_expr(value)?;
                 if let Type::Struct(struct_name, _) = &target_type {
-                    if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name) {
-                        if let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
+                    if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
+                        && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field) {
                             let expected = Type::from_str(&sf.typ);
                             if !self.types_compatible(&value_type, &expected) {
                                 return Err(TypeError::new(format!(
@@ -649,7 +649,6 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                             }
                             return Ok(Type::Void);
                         }
-                    }
                     return Err(TypeError::new(format!("unknown field: {}", field)));
                 }
                 Err(TypeError::new("field assignment on non-struct type"))
@@ -987,15 +986,14 @@ fn check_function(&mut self, func: &FunctionDef) -> TypeResult<()> {
                 let value_type = self.infer_expr(value)?;
                 let annotated = typ.as_ref().map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
 
-                if let Some(expected) = &annotated {
-                    if !self.types_compatible(&value_type, expected) {
+                if let Some(expected) = &annotated
+                    && !self.types_compatible(&value_type, expected) {
                         return Err(TypeError::new(format!(
                             "cannot assign {} to variable of type {}",
                             self.type_name(&value_type),
                             self.type_name(expected)
                         )));
                     }
-                }
 
                 let final_type = annotated.unwrap_or(value_type);
                 self.env.insert_local(name.clone(), final_type);

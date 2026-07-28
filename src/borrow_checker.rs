@@ -69,6 +69,12 @@ pub struct BorrowChecker {
     bindings: HashMap<String, Binding>,
 }
 
+impl Default for BorrowChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BorrowChecker {
     pub fn new() -> Self {
         Self {
@@ -407,17 +413,15 @@ impl BorrowChecker {
     }
 
     fn replace_binding(&mut self, name: &str, new_binding: Binding) {
-        if let Some(old) = self.bindings.remove(name) {
-            if let Some(src) = old.borrowed_from {
-                if let Some(source) = self.bindings.get_mut(&src) {
+        if let Some(old) = self.bindings.remove(name)
+            && let Some(src) = old.borrowed_from
+                && let Some(source) = self.bindings.get_mut(&src) {
                     if old.kind == BindingKind::BorrowMut {
                         source.has_mut_borrow = false;
                     } else if source.imm_borrows > 0 {
                         source.imm_borrows -= 1;
                     }
                 }
-            }
-        }
 
         self.bindings.insert(name.to_string(), new_binding);
     }

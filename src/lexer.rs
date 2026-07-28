@@ -594,7 +594,7 @@ impl Lexer {
                     column: start_col,
                 }
             }
-            c if c.is_digit(10) => {
+            c if c.is_ascii_digit() => {
                 let mut num = c.to_digit(10).unwrap() as f64;
                 let mut is_float = false;
                 while let Some(ch) = self.peek() {
@@ -615,7 +615,7 @@ impl Lexer {
                                 break;
                             }
                         }
-                        num = num + decimal / 10.0_f64.powf(decimal_digits as f64);
+                        num += decimal / 10.0_f64.powf(decimal_digits as f64);
                         break;
                     } else {
                         break;
