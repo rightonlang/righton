@@ -1,15 +1,15 @@
 use clap::Parser;
+use llvm_sys::target::{
+    LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs,
+    LLVM_InitializeAllTargets,
+};
+use righton::CompileObjectOptions;
 use righton::ast::SourceSpan;
 use righton::compiler::LLVMTextGen;
 use righton::diagnostics::Diagnostic;
 use righton::lexer::Lexer;
 use righton::llvm;
 use righton::parser;
-use righton::CompileObjectOptions;
-use llvm_sys::target::{
-    LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs,
-    LLVM_InitializeAllTargets,
-};
 use std::fs;
 use std::path::Path;
 
@@ -45,7 +45,8 @@ fn extract_line_col(err: &str) -> Option<(usize, usize)> {
     if let Some(start) = err.find("(line=") {
         let tail = &err[start + 6..];
         let parts: Vec<&str> = tail.split(&[',', ')'][..]).collect();
-        let line = parts.first()
+        let line = parts
+            .first()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
         let col = err
@@ -59,21 +60,22 @@ fn extract_line_col(err: &str) -> Option<(usize, usize)> {
     if let Some(start) = err.find("line ") {
         let tail = &err[start + 5..];
         if let Some((line_str, _)) = tail.split_once(':')
-            && let Ok(line) = line_str.trim().parse::<usize>() {
-                return Some((line, 0));
-            }
+            && let Ok(line) = line_str.trim().parse::<usize>()
+        {
+            return Some((line, 0));
+        }
     }
     None
 }
 
 fn format_error(source: &str, err: &str, _is_parse: bool, error_format: &Option<String>) -> String {
     if let Some(format) = error_format
-        && format == "json" {
-            let diag = Diagnostic::error(Some("E0000"), err)
-                .with_span(extract_span(err));
-            return serde_json::to_string_pretty(&diag.to_json()).unwrap_or_else(|_| err.to_string());
-        }
-    
+        && format == "json"
+    {
+        let diag = Diagnostic::error(Some("E0000"), err).with_span(extract_span(err));
+        return serde_json::to_string_pretty(&diag.to_json()).unwrap_or_else(|_| err.to_string());
+    }
+
     let mut result = format!("Error: {}", err);
     if let Some((line, col)) = extract_line_col(err) {
         let line_num = line.saturating_sub(1);
@@ -132,11 +134,7 @@ fn run() -> Result<(), String> {
         }
     };
 
-    let profile = cli
-        .profile
-        .as_deref()
-        .unwrap_or("debug")
-        .to_lowercase();
+    let profile = cli.profile.as_deref().unwrap_or("debug").to_lowercase();
     if profile != "debug" && profile != "release" {
         return Err("profile must be either 'debug' or 'release'.".to_string());
     }
@@ -154,7 +152,9 @@ fn run() -> Result<(), String> {
         .map_err(|e| format_error(&code, &e.to_string(), true, &cli.error_format))?;
 
     let mut r#gen = LLVMTextGen::new();
-    let ir = r#gen.generate(&program).map_err(|e| format_error(&code, &e.to_string(), false, &cli.error_format))?;
+    let ir = r#gen
+        .generate(&program)
+        .map_err(|e| format_error(&code, &e.to_string(), false, &cli.error_format))?;
 
     if cli.emit_ir {
         println!("{}", ir);

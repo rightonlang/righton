@@ -51,16 +51,26 @@ impl Diagnostic {
         let mut msg = String::new();
         if let Some(span) = self.span {
             if span.line > 0 {
-                msg.push_str(&format!("error[{}] at line {}, col {}: {}", 
-                    self.code.unwrap_or("unknown"), 
-                    span.line, 
-                    span.column, 
-                    self.message));
+                msg.push_str(&format!(
+                    "error[{}] at line {}, col {}: {}",
+                    self.code.unwrap_or("unknown"),
+                    span.line,
+                    span.column,
+                    self.message
+                ));
             } else {
-                msg.push_str(&format!("error[{}]: {}", self.code.unwrap_or("unknown"), self.message));
+                msg.push_str(&format!(
+                    "error[{}]: {}",
+                    self.code.unwrap_or("unknown"),
+                    self.message
+                ));
             }
         } else {
-            msg.push_str(&format!("error[{}]: {}", self.code.unwrap_or("unknown"), self.message));
+            msg.push_str(&format!(
+                "error[{}]: {}",
+                self.code.unwrap_or("unknown"),
+                self.message
+            ));
         }
         if let Some(ref hint) = self.hint {
             msg.push_str(&format!("\n  hint: {}", hint));

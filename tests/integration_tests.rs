@@ -139,7 +139,7 @@ mod tests {
                             Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Add,
                             Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
-                        SourceSpan::unknown(),
+                            SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -190,7 +190,7 @@ mod tests {
                             Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Mul,
                             Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
-                        SourceSpan::unknown(),
+                            SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -241,7 +241,7 @@ mod tests {
                             Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
                             Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
-                        SourceSpan::unknown(),
+                            SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -292,7 +292,7 @@ mod tests {
                             Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
                             BinOp::Add,
                             Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
-                        SourceSpan::unknown(),
+                            SourceSpan::unknown(),
                         )),
                         is_const: false,
                     },
@@ -383,7 +383,9 @@ mod tests {
 
         let missing_output = run_bin(&["-i", input.to_str().unwrap()]);
         assert!(!missing_output.status.success());
-        assert!(String::from_utf8_lossy(&missing_output.stderr).contains("output file not specified"));
+        assert!(
+            String::from_utf8_lossy(&missing_output.stderr).contains("output file not specified")
+        );
 
         let _ = fs::remove_file(input);
     }
@@ -413,7 +415,11 @@ mod tests {
     fn test_cli_borrow_codegen_succeeds() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let a = 1\n    let r = &a\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let a = 1\n    let r = &a\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -436,7 +442,11 @@ mod tests {
     fn test_cli_borrow_conflict_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let a = 1\n    let r = &a\n    let m = &mut a").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let a = 1\n    let r = &a\n    let m = &mut a",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -456,7 +466,11 @@ mod tests {
     fn test_cli_move_after_borrow_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let r = &s\n    let t = s").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let s = \"hello\"\n    let r = &s\n    let t = s",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -487,7 +501,12 @@ mod tests {
         .unwrap();
 
         let result = run_bin_in_dir(
-            &["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()],
+            &[
+                "-i",
+                input.to_str().unwrap(),
+                "-o",
+                output.to_str().unwrap(),
+            ],
             &temp_dir,
         );
 
@@ -593,16 +612,19 @@ mod tests {
                             Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
                             Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
-                        SourceSpan::unknown(),
+                            SourceSpan::unknown(),
                         )),
                         body: Box::new(Block {
                             stmts: vec![Expr::Assign {
                                 name: "x".to_string(),
                                 value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
+                                    Box::new(Expr::Identifier(
+                                        "x".to_string(),
+                                        SourceSpan::unknown(),
+                                    )),
                                     BinOp::Sub,
                                     Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
-                                SourceSpan::unknown(),
+                                    SourceSpan::unknown(),
                                 )),
                             }],
                         }),
@@ -654,16 +676,22 @@ mod tests {
                             Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
                             Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
-                        SourceSpan::unknown(),
+                            SourceSpan::unknown(),
                         )),
                         body: Box::new(Block {
                             stmts: vec![
                                 Expr::If {
                                     condition: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
+                                        Box::new(Expr::Identifier(
+                                            "x".to_string(),
+                                            SourceSpan::unknown(),
+                                        )),
                                         BinOp::Eq,
-                                        Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
-                                    SourceSpan::unknown(),
+                                        Box::new(Expr::Literal(
+                                            Literal::Int(5),
+                                            SourceSpan::unknown(),
+                                        )),
+                                        SourceSpan::unknown(),
                                     )),
                                     then_branch: Box::new(Block {
                                         stmts: vec![Expr::Break],
@@ -673,10 +701,16 @@ mod tests {
                                 Expr::Assign {
                                     name: "x".to_string(),
                                     value: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
+                                        Box::new(Expr::Identifier(
+                                            "x".to_string(),
+                                            SourceSpan::unknown(),
+                                        )),
                                         BinOp::Sub,
-                                        Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
-                                    SourceSpan::unknown(),
+                                        Box::new(Expr::Literal(
+                                            Literal::Int(1),
+                                            SourceSpan::unknown(),
+                                        )),
+                                        SourceSpan::unknown(),
                                     )),
                                 },
                             ],
@@ -727,16 +761,22 @@ mod tests {
                             Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
                             BinOp::Gt,
                             Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
-                        SourceSpan::unknown(),
+                            SourceSpan::unknown(),
                         )),
                         body: Box::new(Block {
                             stmts: vec![
                                 Expr::If {
                                     condition: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
+                                        Box::new(Expr::Identifier(
+                                            "x".to_string(),
+                                            SourceSpan::unknown(),
+                                        )),
                                         BinOp::Eq,
-                                        Box::new(Expr::Literal(Literal::Int(2), SourceSpan::unknown())),
-                                    SourceSpan::unknown(),
+                                        Box::new(Expr::Literal(
+                                            Literal::Int(2),
+                                            SourceSpan::unknown(),
+                                        )),
+                                        SourceSpan::unknown(),
                                     )),
                                     then_branch: Box::new(Block {
                                         stmts: vec![Expr::Continue],
@@ -746,10 +786,16 @@ mod tests {
                                 Expr::Assign {
                                     name: "x".to_string(),
                                     value: Box::new(Expr::Binary(
-                                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
+                                        Box::new(Expr::Identifier(
+                                            "x".to_string(),
+                                            SourceSpan::unknown(),
+                                        )),
                                         BinOp::Sub,
-                                        Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
-                                    SourceSpan::unknown(),
+                                        Box::new(Expr::Literal(
+                                            Literal::Int(1),
+                                            SourceSpan::unknown(),
+                                        )),
+                                        SourceSpan::unknown(),
                                     )),
                                 },
                             ],
@@ -792,9 +838,7 @@ mod tests {
                     Expr::For {
                         variable: "i".to_string(),
                         iterable: Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
-                        body: Box::new(Block {
-                            stmts: vec![],
-                        }),
+                        body: Box::new(Block { stmts: vec![] }),
                     },
                 ],
             }],
@@ -837,10 +881,13 @@ mod tests {
                         body: Box::new(Block {
                             stmts: vec![Expr::If {
                                 condition: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier("i".to_string(), SourceSpan::unknown())),
+                                    Box::new(Expr::Identifier(
+                                        "i".to_string(),
+                                        SourceSpan::unknown(),
+                                    )),
                                     BinOp::Eq,
                                     Box::new(Expr::Literal(Literal::Int(5), SourceSpan::unknown())),
-                                SourceSpan::unknown(),
+                                    SourceSpan::unknown(),
                                 )),
                                 then_branch: Box::new(Block {
                                     stmts: vec![Expr::Break],
@@ -886,10 +933,13 @@ mod tests {
                         body: Box::new(Block {
                             stmts: vec![Expr::If {
                                 condition: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier("i".to_string(), SourceSpan::unknown())),
+                                    Box::new(Expr::Identifier(
+                                        "i".to_string(),
+                                        SourceSpan::unknown(),
+                                    )),
                                     BinOp::Eq,
                                     Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
-                                SourceSpan::unknown(),
+                                    SourceSpan::unknown(),
                                 )),
                                 then_branch: Box::new(Block {
                                     stmts: vec![Expr::Continue],
@@ -940,14 +990,23 @@ mod tests {
                         body: Box::new(Block {
                             stmts: vec![Expr::For {
                                 variable: "j".to_string(),
-                                iterable: Box::new(Expr::Literal(Literal::Int(3), SourceSpan::unknown())),
+                                iterable: Box::new(Expr::Literal(
+                                    Literal::Int(3),
+                                    SourceSpan::unknown(),
+                                )),
                                 body: Box::new(Block {
                                     stmts: vec![Expr::If {
                                         condition: Box::new(Expr::Binary(
-                                            Box::new(Expr::Identifier("j".to_string(), SourceSpan::unknown())),
+                                            Box::new(Expr::Identifier(
+                                                "j".to_string(),
+                                                SourceSpan::unknown(),
+                                            )),
                                             BinOp::Eq,
-                                            Box::new(Expr::Literal(Literal::Int(2), SourceSpan::unknown())),
-                                        SourceSpan::unknown(),
+                                            Box::new(Expr::Literal(
+                                                Literal::Int(2),
+                                                SourceSpan::unknown(),
+                                            )),
+                                            SourceSpan::unknown(),
                                         )),
                                         then_branch: Box::new(Block {
                                             stmts: vec![Expr::Break],
@@ -999,14 +1058,23 @@ mod tests {
                         body: Box::new(Block {
                             stmts: vec![Expr::For {
                                 variable: "j".to_string(),
-                                iterable: Box::new(Expr::Literal(Literal::Int(2), SourceSpan::unknown())),
+                                iterable: Box::new(Expr::Literal(
+                                    Literal::Int(2),
+                                    SourceSpan::unknown(),
+                                )),
                                 body: Box::new(Block {
                                     stmts: vec![Expr::If {
                                         condition: Box::new(Expr::Binary(
-                                            Box::new(Expr::Identifier("j".to_string(), SourceSpan::unknown())),
+                                            Box::new(Expr::Identifier(
+                                                "j".to_string(),
+                                                SourceSpan::unknown(),
+                                            )),
                                             BinOp::Eq,
-                                            Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
-                                        SourceSpan::unknown(),
+                                            Box::new(Expr::Literal(
+                                                Literal::Int(1),
+                                                SourceSpan::unknown(),
+                                            )),
+                                            SourceSpan::unknown(),
                                         )),
                                         then_branch: Box::new(Block {
                                             stmts: vec![Expr::Continue],
@@ -1125,7 +1193,11 @@ mod tests {
     fn test_for_loop_compiles_end_to_end() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    for i = 3:\n        i\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    for i = 3:\n        i\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1283,7 +1355,11 @@ mod tests {
     fn test_type_mismatch_in_assignment_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let x: i32 = \"hello\"\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let x: i32 = \"hello\"\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1308,7 +1384,11 @@ mod tests {
     fn test_string_concatenation() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let t = s + \" world\"\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let s = \"hello\"\n    let t = s + \" world\"\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1317,7 +1397,11 @@ mod tests {
             output.to_str().unwrap(),
         ]);
 
-        assert!(result.status.success(), "string concat failed: {}", String::from_utf8_lossy(&result.stderr));
+        assert!(
+            result.status.success(),
+            "string concat failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -1327,7 +1411,11 @@ mod tests {
     fn test_invalid_if_condition_type_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    if \"test\":\n        return 1\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    if \"test\":\n        return 1\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1352,7 +1440,11 @@ mod tests {
     fn test_invalid_while_condition_type_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    while \"test\":\n        return 0\n    return 1").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    while \"test\":\n        return 0\n    return 1",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1371,7 +1463,11 @@ mod tests {
     fn test_comparison_type_mismatch_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let x = 1\n    let result = x < \"hello\"\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let x = 1\n    let result = x < \"hello\"\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1396,7 +1492,11 @@ mod tests {
     fn test_unary_not_on_string_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let r = not s\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let s = \"hello\"\n    let r = not s\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1415,7 +1515,11 @@ mod tests {
     fn test_unary_negate_on_string_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    let s = \"hello\"\n    let r = -s\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    let s = \"hello\"\n    let r = -s\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1486,7 +1590,11 @@ mod tests {
     fn test_for_loop_with_invalid_iterable_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    for i in 3.14:\n        i\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    for i in 3.14:\n        i\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1635,11 +1743,7 @@ mod tests {
     fn test_const_immutable_codegen() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(
-            &input,
-            "fn main():\n    const PI = 3.14\n    return 0",
-        )
-        .unwrap();
+        fs::write(&input, "fn main():\n    const PI = 3.14\n    return 0").unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1881,18 +1985,19 @@ mod tests {
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
-                body: vec![
-                    Expr::Let {
-                        name: "tup".to_string(),
-                        typ: None,
-                        value: Box::new(Expr::Tuple(vec![
+                body: vec![Expr::Let {
+                    name: "tup".to_string(),
+                    typ: None,
+                    value: Box::new(Expr::Tuple(
+                        vec![
                             Expr::Literal(Literal::Int(1), SourceSpan::unknown()),
                             Expr::Literal(Literal::Int(2), SourceSpan::unknown()),
                             Expr::Literal(Literal::Int(3), SourceSpan::unknown()),
-                        ], SourceSpan::unknown())),
-                        is_const: false,
-                    },
-                ],
+                        ],
+                        SourceSpan::unknown(),
+                    )),
+                    is_const: false,
+                }],
             }],
             profile: "debug".to_string(),
             type_aliases: vec![],
@@ -1921,17 +2026,23 @@ mod tests {
                     Expr::Let {
                         name: "tup".to_string(),
                         typ: None,
-                        value: Box::new(Expr::Tuple(vec![
-                            Expr::Literal(Literal::Int(10), SourceSpan::unknown()),
-                            Expr::Literal(Literal::Int(20), SourceSpan::unknown()),
-                        ], SourceSpan::unknown())),
+                        value: Box::new(Expr::Tuple(
+                            vec![
+                                Expr::Literal(Literal::Int(10), SourceSpan::unknown()),
+                                Expr::Literal(Literal::Int(20), SourceSpan::unknown()),
+                            ],
+                            SourceSpan::unknown(),
+                        )),
                         is_const: false,
                     },
                     Expr::Let {
                         name: "x".to_string(),
                         typ: None,
                         value: Box::new(Expr::TupleAccess {
-                            target: Box::new(Expr::Identifier("tup".to_string(), SourceSpan::unknown())),
+                            target: Box::new(Expr::Identifier(
+                                "tup".to_string(),
+                                SourceSpan::unknown(),
+                            )),
                             index: 0,
                         }),
                         is_const: false,
@@ -1957,8 +2068,17 @@ mod tests {
         let output = temp_file("ll");
         fs::write(&input, "fn main():\n    let tup = (1, 2, 3)\n    return 0").unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "tuple literal failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "tuple literal failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -1970,8 +2090,17 @@ mod tests {
         let output = temp_file("ll");
         fs::write(&input, "fn main():\n    let tup = (10, 20)\n    let x = tup.0\n    let y = tup.1\n    return 0").unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "tuple access failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "tuple access failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -1993,9 +2122,10 @@ mod tests {
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
-                body: vec![
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
-                ],
+                body: vec![Expr::Return(
+                    Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                    SourceSpan::unknown(),
+                )],
             }],
             profile: "debug".to_string(),
             type_aliases: vec![TypeAlias {
@@ -2023,14 +2153,21 @@ mod tests {
                 params: vec![],
                 param_types: vec![],
                 return_type: None,
-                body: vec![
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
-                ],
+                body: vec![Expr::Return(
+                    Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                    SourceSpan::unknown(),
+                )],
             }],
             profile: "debug".to_string(),
             type_aliases: vec![
-                TypeAlias { name: "Int".to_string(), value: "i32".to_string() },
-                TypeAlias { name: "MyInt".to_string(), value: "Int".to_string() },
+                TypeAlias {
+                    name: "Int".to_string(),
+                    value: "i32".to_string(),
+                },
+                TypeAlias {
+                    name: "MyInt".to_string(),
+                    value: "Int".to_string(),
+                },
             ],
             impls: vec![],
             enums: vec![],
@@ -2061,7 +2198,10 @@ mod tests {
                         value: Box::new(Expr::Literal(Literal::Int(42), SourceSpan::unknown())),
                         is_const: false,
                     },
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
+                    Expr::Return(
+                        Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
+                    ),
                 ],
             }],
             profile: "debug".to_string(),
@@ -2079,7 +2219,11 @@ mod tests {
         if let Err(e) = &result {
             eprintln!("type_alias_in_let error: {:?}", e);
         }
-        assert!(result.is_ok(), "type alias in let should work: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "type alias in let should work: {:?}",
+            result.err()
+        );
     }
 
     // ========================
@@ -2090,10 +2234,23 @@ mod tests {
     fn test_enum_definition_compiles() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "enum Option:\n    None\n    Some(i32)\nfn main():\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "enum Option:\n    None\n    Some(i32)\nfn main():\n    return 0",
+        )
+        .unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "enum definition failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "enum definition failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -2105,8 +2262,17 @@ mod tests {
         let output = temp_file("ll");
         fs::write(&input, "enum Option:\n    None\n    Some(i32)\nfn main():\n    let x = Option::Some(42)\n    return 0").unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "enum literal failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "enum literal failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -2118,8 +2284,17 @@ mod tests {
         let output = temp_file("ll");
         fs::write(&input, "import std\nenum Option:\n    None\n    Some(i32)\nfn main():\n    let x = Option::Some(42)\n    print(x)\n    return 0").unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "enum test failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "enum test failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -2136,8 +2311,17 @@ mod tests {
         let output = temp_file("ll");
         fs::write(&input, "struct Point:\n    let x = 0\n    let y = 0\nfn main():\n    let p = Point { x: 1, y: 2 }\n    return 0").unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "struct test failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "struct test failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -2152,10 +2336,23 @@ mod tests {
     fn test_stdlib_to_hex() {
         let input = temp_file("ron");
         let output = temp_file("o");
-        fs::write(&input, "import std\nfn main():\n    print(to_hex(255))\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "import std\nfn main():\n    print(to_hex(255))\n    return 0",
+        )
+        .unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "to_hex failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "to_hex failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -2166,10 +2363,23 @@ mod tests {
     fn test_stdlib_str_repeat() {
         let input = temp_file("ron");
         let output = temp_file("o");
-        fs::write(&input, "import std\nfn main():\n    let s = str_repeat(\"ab\", 3)\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "import std\nfn main():\n    let s = str_repeat(\"ab\", 3)\n    return 0",
+        )
+        .unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
-        assert!(result.status.success(), "str_repeat failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert!(
+            result.status.success(),
+            "str_repeat failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -2185,10 +2395,23 @@ mod tests {
         let output = temp_file("o");
         fs::write(&input, "fn main():\n    return 42").unwrap();
 
-        let result = run_bin(&["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap(), "--emit-ir"]);
-        assert!(result.status.success(), "emit-ir failed: {}", String::from_utf8_lossy(&result.stderr));
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+            "--emit-ir",
+        ]);
+        assert!(
+            result.status.success(),
+            "emit-ir failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         let stdout = String::from_utf8_lossy(&result.stdout);
-        assert!(stdout.contains("define i32 @main"), "emit-ir should show IR");
+        assert!(
+            stdout.contains("define i32 @main"),
+            "emit-ir should show IR"
+        );
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -2220,7 +2443,10 @@ mod tests {
                         ])),
                         is_const: false,
                     },
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
+                    Expr::Return(
+                        Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
+                    ),
                 ],
             }],
             profile: "debug".to_string(),
@@ -2232,7 +2458,11 @@ mod tests {
         };
 
         let result = r#gen.generate(&program);
-        assert!(result.is_ok(), "list literal should compile: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "list literal should compile: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -2257,10 +2487,16 @@ mod tests {
                         ])),
                         is_const: false,
                     },
-                    Expr::Return(Box::new(Expr::Index {
-                        target: Box::new(Expr::Identifier("lst".to_string(), SourceSpan::unknown())),
-                        index: Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
-                    }), SourceSpan::unknown()),
+                    Expr::Return(
+                        Box::new(Expr::Index {
+                            target: Box::new(Expr::Identifier(
+                                "lst".to_string(),
+                                SourceSpan::unknown(),
+                            )),
+                            index: Box::new(Expr::Literal(Literal::Int(1), SourceSpan::unknown())),
+                        }),
+                        SourceSpan::unknown(),
+                    ),
                 ],
             }],
             profile: "debug".to_string(),
@@ -2272,7 +2508,11 @@ mod tests {
         };
 
         let result = r#gen.generate(&program);
-        assert!(result.is_ok(), "list index should compile: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "list index should compile: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -2296,7 +2536,10 @@ mod tests {
                         ])),
                         is_const: false,
                     },
-                    Expr::Return(Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())), SourceSpan::unknown()),
+                    Expr::Return(
+                        Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
+                    ),
                 ],
             }],
             profile: "debug".to_string(),
@@ -2308,6 +2551,10 @@ mod tests {
         };
 
         let result = r#gen.generate(&program);
-        assert!(result.is_ok(), "float list literal should compile: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "float list literal should compile: {:?}",
+            result.err()
+        );
     }
 }

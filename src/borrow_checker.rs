@@ -98,7 +98,8 @@ impl BorrowChecker {
         self.bindings.clear();
 
         for param in &func.params {
-            self.bindings.insert(param.clone(), Binding::new(BindingKind::External));
+            self.bindings
+                .insert(param.clone(), Binding::new(BindingKind::External));
         }
 
         self.check_stmts(&func.body)?;
@@ -181,19 +182,30 @@ impl BorrowChecker {
                 self.bindings = saved;
                 Ok(())
             }
-            Expr::For { variable, iterable, body } => {
+            Expr::For {
+                variable,
+                iterable,
+                body,
+            } => {
                 self.visit_expr(iterable)?;
                 let saved = self.bindings.clone();
-                self.bindings.insert(variable.clone(), Binding::new(BindingKind::Copy));
+                self.bindings
+                    .insert(variable.clone(), Binding::new(BindingKind::Copy));
                 self.check_stmts(&body.stmts)?;
                 self.bindings = saved;
                 Ok(())
             }
-            Expr::ForRange { variable, start, end, body } => {
+            Expr::ForRange {
+                variable,
+                start,
+                end,
+                body,
+            } => {
                 self.visit_expr(start)?;
                 self.visit_expr(end)?;
                 let saved = self.bindings.clone();
-                self.bindings.insert(variable.clone(), Binding::new(BindingKind::Copy));
+                self.bindings
+                    .insert(variable.clone(), Binding::new(BindingKind::Copy));
                 self.check_stmts(&body.stmts)?;
                 self.bindings = saved;
                 Ok(())
@@ -212,7 +224,9 @@ impl BorrowChecker {
 
     fn handle_let(&mut self, name: &str, value: &Expr) -> Result<(), BorrowCheckError> {
         match value {
-            Expr::Borrow { name: src, mutable, .. } => self.bind_borrow(name, src, *mutable),
+            Expr::Borrow {
+                name: src, mutable, ..
+            } => self.bind_borrow(name, src, *mutable),
             Expr::Identifier(src, _) => self.bind_from_identifier(name, src, true),
             Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => {
                 self.replace_binding(name, Binding::new(BindingKind::OwnedPtr));
@@ -246,7 +260,9 @@ impl BorrowChecker {
         }
 
         match value {
-            Expr::Borrow { name: src, mutable, .. } => self.bind_borrow(name, src, *mutable),
+            Expr::Borrow {
+                name: src, mutable, ..
+            } => self.bind_borrow(name, src, *mutable),
             Expr::Identifier(src, _) => self.bind_from_identifier(name, src, true),
             Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => {
                 self.replace_binding(name, Binding::new(BindingKind::OwnedPtr));
@@ -415,13 +431,14 @@ impl BorrowChecker {
     fn replace_binding(&mut self, name: &str, new_binding: Binding) {
         if let Some(old) = self.bindings.remove(name)
             && let Some(src) = old.borrowed_from
-                && let Some(source) = self.bindings.get_mut(&src) {
-                    if old.kind == BindingKind::BorrowMut {
-                        source.has_mut_borrow = false;
-                    } else if source.imm_borrows > 0 {
-                        source.imm_borrows -= 1;
-                    }
-                }
+            && let Some(source) = self.bindings.get_mut(&src)
+        {
+            if old.kind == BindingKind::BorrowMut {
+                source.has_mut_borrow = false;
+            } else if source.imm_borrows > 0 {
+                source.imm_borrows -= 1;
+            }
+        }
 
         self.bindings.insert(name.to_string(), new_binding);
     }

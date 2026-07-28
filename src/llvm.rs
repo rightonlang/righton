@@ -69,7 +69,10 @@ pub fn compile_object(
     };
 
     if target_machine.is_null() {
-        return Err(format!("Failed to create target machine for triple '{}'", triple_str));
+        return Err(format!(
+            "Failed to create target machine for triple '{}'",
+            triple_str
+        ));
     }
 
     let output_file = CString::new(output_path.clone()).unwrap();

@@ -32,15 +32,18 @@ impl ParseError {
         } else {
             SourceSpan::unknown()
         };
-        Diagnostic::error(Some("E0001"), self.message.clone())
-            .with_span(span)
+        Diagnostic::error(Some("E0001"), self.message.clone()).with_span(span)
     }
 }
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.line > 0 {
-            write!(f, "{} (line={}, col={})", self.message, self.line, self.column)
+            write!(
+                f,
+                "{} (line={}, col={})",
+                self.message, self.line, self.column
+            )
         } else {
             write!(f, "{}", self.message)
         }
@@ -159,7 +162,11 @@ impl<'a> Parser<'a> {
                     return Err(ParseError::new("expected name after borrow operator"));
                 };
 
-                Ok(Expr::Borrow { name, mutable, span })
+                Ok(Expr::Borrow {
+                    name,
+                    mutable,
+                    span,
+                })
             }
             Some(TokenKind::Not) => {
                 let span = self.current_span();
@@ -276,14 +283,16 @@ impl<'a> Parser<'a> {
                     condition: elif_condition,
                     then_branch: Box::new(elif_body),
                     else_branch: rest,
-                }]
+                }],
             })))
         } else if self.current == Some(TokenKind::Else) {
             self.advance();
             self.eat(TokenKind::Colon)?;
             if self.current == Some(TokenKind::If) {
                 let nested_if = self.parse_if_expr()?;
-                Ok(Some(Box::new(Block { stmts: vec![nested_if] })))
+                Ok(Some(Box::new(Block {
+                    stmts: vec![nested_if],
+                })))
             } else {
                 let else_block = self.parse_block()?;
                 Ok(Some(Box::new(else_block)))
@@ -449,9 +458,7 @@ impl<'a> Parser<'a> {
                 Some(_tok) => {
                     return Err(ParseError::new(format!(
                         "expected define of the function or expression, but found {:?} (line={}, col={})",
-                        _tok,
-                        self.lexer.line,
-                        self.lexer.column
+                        _tok, self.lexer.line, self.lexer.column
                     )));
                 }
                 None => break,
@@ -478,7 +485,10 @@ impl<'a> Parser<'a> {
         }
 
         match self.current {
-            Some(TokenKind::Else) | Some(TokenKind::Elif) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
+            Some(TokenKind::Else)
+            | Some(TokenKind::Elif)
+            | Some(TokenKind::Eof)
+            | Some(TokenKind::Fn) => {
                 return Ok(Block { stmts });
             }
             _ => {}
@@ -490,7 +500,10 @@ impl<'a> Parser<'a> {
             while self.current == Some(TokenKind::Newline) {
                 self.advance();
                 match self.current {
-                    Some(TokenKind::Else) | Some(TokenKind::Elif) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => {
+                    Some(TokenKind::Else)
+                    | Some(TokenKind::Elif)
+                    | Some(TokenKind::Eof)
+                    | Some(TokenKind::Fn) => {
                         return Ok(Block { stmts });
                     }
                     _ => {}
@@ -502,7 +515,10 @@ impl<'a> Parser<'a> {
             }
 
             match self.current {
-                Some(TokenKind::Else) | Some(TokenKind::Elif) | Some(TokenKind::Eof) | Some(TokenKind::Fn) => break,
+                Some(TokenKind::Else)
+                | Some(TokenKind::Elif)
+                | Some(TokenKind::Eof)
+                | Some(TokenKind::Fn) => break,
                 None => break,
                 _ => {}
             }
@@ -598,7 +614,9 @@ impl<'a> Parser<'a> {
                 self.advance();
                 param_types.push(Some(self.parse_type()?));
             } else {
-                return Err(ParseError::new("extern function parameters must have type annotations"));
+                return Err(ParseError::new(
+                    "extern function parameters must have type annotations",
+                ));
             }
             if self.current == Some(TokenKind::Comma) {
                 self.advance();
@@ -651,9 +669,7 @@ impl<'a> Parser<'a> {
             }
             Some(tok) => Err(ParseError::new(format!(
                 "expected type annotation but found {:?} (line={}, col={})",
-                tok,
-                self.lexer.line,
-                self.lexer.column
+                tok, self.lexer.line, self.lexer.column
             ))),
             None => Err(ParseError::new("expected type annotation")),
         }
@@ -696,10 +712,17 @@ impl<'a> Parser<'a> {
         for expr in block.stmts {
             if let Expr::Let { name, typ, .. } = expr {
                 let field_type = typ.unwrap_or_else(|| "i32".to_string());
-                fields.push(StructField { name, typ: field_type });
+                fields.push(StructField {
+                    name,
+                    typ: field_type,
+                });
             }
         }
-        Ok(StructDef { name, generic_params, fields })
+        Ok(StructDef {
+            name,
+            generic_params,
+            fields,
+        })
     }
 
     fn parse_enum_def(&mut self) -> Result<EnumDef, ParseError> {
@@ -715,11 +738,21 @@ impl<'a> Parser<'a> {
         let mut variants = Vec::new();
         for expr in block.stmts {
             if let Expr::Identifier(vname, _) = expr {
-                variants.push(EnumVariant { name: vname, fields: Vec::new() });
+                variants.push(EnumVariant {
+                    name: vname,
+                    fields: Vec::new(),
+                });
             } else if let Expr::Call { func, args } = expr {
-                let fields: Vec<String> = args.into_iter().map(|a| {
-                    if let Expr::Identifier(n, _) = a { n } else { "value".to_string() }
-                }).collect();
+                let fields: Vec<String> = args
+                    .into_iter()
+                    .map(|a| {
+                        if let Expr::Identifier(n, _) = a {
+                            n
+                        } else {
+                            "value".to_string()
+                        }
+                    })
+                    .collect();
                 variants.push(EnumVariant { name: func, fields });
             }
         }
@@ -787,14 +820,21 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(ImplDef { struct_name, methods })
+        Ok(ImplDef {
+            struct_name,
+            methods,
+        })
     }
 
     fn parse_binary(&mut self, mut left: Expr, min_prec: i32) -> Result<Expr, ParseError> {
         loop {
             let op_opt = self.current.clone();
             let is_implicit = Self::is_implicit_mul_start(&op_opt);
-            let prec = if is_implicit { 30 } else { Self::get_precedence(&op_opt) };
+            let prec = if is_implicit {
+                30
+            } else {
+                Self::get_precedence(&op_opt)
+            };
             if prec < min_prec {
                 break;
             }
@@ -825,7 +865,7 @@ impl<'a> Parser<'a> {
                         return Err(ParseError::new(format!(
                             "unknown operator: {:?} (line={}, col={})",
                             op_opt, self.lexer.line, self.lexer.column
-                        )))
+                        )));
                     }
                 }
             };
@@ -901,7 +941,10 @@ impl<'a> Parser<'a> {
                         }
                         self.eat(TokenKind::RParen)?;
                     }
-                    MatchPattern::Variant { name: variant_name, bindings }
+                    MatchPattern::Variant {
+                        name: variant_name,
+                        bindings,
+                    }
                 }
                 _ => break,
             };
@@ -989,8 +1032,12 @@ impl<'a> Parser<'a> {
             Some(TokenKind::Return) => {
                 let span = self.current_span();
                 self.advance();
-                if self.current == Some(TokenKind::Newline) || self.current == Some(TokenKind::Eof) {
-                    Ok(Expr::Return(Box::new(Expr::Literal(Literal::Int(0), span)), span))
+                if self.current == Some(TokenKind::Newline) || self.current == Some(TokenKind::Eof)
+                {
+                    Ok(Expr::Return(
+                        Box::new(Expr::Literal(Literal::Int(0), span)),
+                        span,
+                    ))
                 } else {
                     let value = Box::new(self.parse_expr()?);
                     Ok(Expr::Return(value, span))
@@ -1004,15 +1051,16 @@ impl<'a> Parser<'a> {
                         Some(TokenKind::DoubleColon) => {
                             let enum_name = name.clone();
                             self.advance();
-                            let variant_name = if let Some(TokenKind::Identifier(v)) = self.current.clone() {
-                                self.advance();
-                                v
-                            } else {
-                                return Err(ParseError::new(format!(
-                                    "expected variant name after '::' (line={}, col={})",
-                                    self.lexer.line, self.lexer.column
-                                )));
-                            };
+                            let variant_name =
+                                if let Some(TokenKind::Identifier(v)) = self.current.clone() {
+                                    self.advance();
+                                    v
+                                } else {
+                                    return Err(ParseError::new(format!(
+                                        "expected variant name after '::' (line={}, col={})",
+                                        self.lexer.line, self.lexer.column
+                                    )));
+                                };
                             let mut args = Vec::new();
                             if self.current == Some(TokenKind::LParen) {
                                 self.advance();
@@ -1026,7 +1074,11 @@ impl<'a> Parser<'a> {
                                 }
                                 self.eat(TokenKind::RParen)?;
                             }
-                            left = Expr::EnumLiteral { enum_name, variant_name, args };
+                            left = Expr::EnumLiteral {
+                                enum_name,
+                                variant_name,
+                                args,
+                            };
                         }
                         Some(TokenKind::Equal) => {
                             self.advance();
@@ -1210,10 +1262,7 @@ impl<'a> Parser<'a> {
                                     }
                                 }
                                 self.eat(TokenKind::RParen)?;
-                                left = Expr::Call {
-                                    func: field,
-                                    args,
-                                };
+                                left = Expr::Call { func: field, args };
                             } else if self.current == Some(TokenKind::Equal) {
                                 // Field assignment: receiver.field = expr
                                 self.advance();
@@ -1377,7 +1426,12 @@ mod tests {
     fn test_parse_let_declaration() {
         let program = parse("let x: i32 = 42");
         match extract_global_expr(&program, 0) {
-            Expr::Let { name, typ, is_const, .. } => {
+            Expr::Let {
+                name,
+                typ,
+                is_const,
+                ..
+            } => {
                 assert_eq!(name, "x");
                 assert_eq!(typ, &Some("i32".to_string()));
                 assert!(!is_const);
@@ -1433,7 +1487,11 @@ mod tests {
     fn test_parse_if_expression() {
         let program = parse("if x == 1:\n    return 1\nelse:\n    return 0");
         match extract_global_expr(&program, 0) {
-            Expr::If { condition: _, then_branch, else_branch } => {
+            Expr::If {
+                condition: _,
+                then_branch,
+                else_branch,
+            } => {
                 assert!(then_branch.stmts.len() > 0);
                 assert!(else_branch.is_some());
             }
@@ -1445,12 +1503,10 @@ mod tests {
     fn test_parse_nested_if() {
         let program = parse("if x:\n    if y:\n        return 1\n    else:\n        return 0");
         match extract_global_expr(&program, 0) {
-            Expr::If { then_branch, .. } => {
-                match &then_branch.stmts[0] {
-                    Expr::If { .. } => assert!(true),
-                    _ => panic!("expected nested if"),
-                }
-            }
+            Expr::If { then_branch, .. } => match &then_branch.stmts[0] {
+                Expr::If { .. } => assert!(true),
+                _ => panic!("expected nested if"),
+            },
             _ => panic!("expected if expression"),
         }
     }
@@ -1459,12 +1515,10 @@ mod tests {
     fn test_parse_return_statement() {
         let program = parse("return 42");
         match extract_global_expr(&program, 0) {
-            Expr::Return(expr, _) => {
-                match &**expr {
-                    Expr::Literal(Literal::Int(n), _) => assert_eq!(*n, 42),
-                    _ => panic!("expected integer literal in return"),
-                }
-            }
+            Expr::Return(expr, _) => match &**expr {
+                Expr::Literal(Literal::Int(n), _) => assert_eq!(*n, 42),
+                _ => panic!("expected integer literal in return"),
+            },
             _ => panic!("expected return statement"),
         }
     }
@@ -1480,8 +1534,10 @@ mod tests {
 
     #[test]
     fn test_parse_multiline_string() {
-        let program = parse(r#""""line1
-line2""""#);
+        let program = parse(
+            r#""""line1
+line2""""#,
+        );
         match extract_global_expr(&program, 0) {
             Expr::MultilineString(s, _) => assert_eq!(s, "line1\nline2"),
             _ => panic!("expected multiline string"),
@@ -1605,7 +1661,9 @@ line2""""#);
     fn test_parse_invalid_symbol_reports_location() {
         let mut lexer = Lexer::new("@");
         let mut parser = Parser::new(&mut lexer);
-        let err = parser.parse_program("debug".to_string(), "test".to_string()).unwrap_err();
+        let err = parser
+            .parse_program("debug".to_string(), "test".to_string())
+            .unwrap_err();
         assert!(err.to_string().contains("unknown symbol '@'"));
         assert!(err.to_string().contains("line=1"));
     }
