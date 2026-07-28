@@ -23,6 +23,12 @@ jobs:
           key: lint-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             lint-cargo-
+      
+      - name: Install LLVM 20.1 on Linux and Windows
+        if: runner.os != 'macOS'
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: "20"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

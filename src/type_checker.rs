@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::diagnostics::Diagnostic;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -16,8 +17,10 @@ pub enum Type {
     Generic(String),
 }
 
-impl Type {
-    pub fn from_str(s: &str) -> Self {
+impl std::str::FromStr for Type {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(open) = s.find('[')
             && s.ends_with(']')
         {
@@ -25,19 +28,21 @@ impl Type {
             let args_str = &s[open + 1..s.len() - 1];
             let args: Vec<Type> = args_str
                 .split(',')
-                .map(|a| Type::from_str(a.trim()))
+                .map(|a| Type::from_str(a.trim()).unwrap())
                 .collect();
-            return Type::Struct(base.to_string(), args);
+            return Ok(Type::Struct(base.to_string(), args));
         }
         match s {
-            "i32" => Type::I32,
-            "f64" | "float" | "double" => Type::F64,
-            "bool" => Type::Bool,
-            "str" | "string" | "ptr" => Type::String,
-            _ => Type::Unknown,
+            "i32" => Ok(Type::I32),
+            "f64" | "float" | "double" => Ok(Type::F64),
+            "bool" => Ok(Type::Bool),
+            "str" | "string" | "ptr" => Ok(Type::String),
+            _ => Ok(Type::Unknown),
         }
     }
+}
 
+impl Type {
     pub fn to_llvm(&self) -> &'static str {
         match self {
             Type::I32 => "i32",
@@ -179,7 +184,7 @@ impl TypeEnv {
                 break;
             }
         }
-        Type::from_str(&current)
+        Type::from_str(&current).unwrap()
     }
 }
 
@@ -677,7 +682,7 @@ impl TypeChecker {
                                     )));
                                 }
                                 for (i, binding) in bindings.iter().enumerate() {
-                                    let field_type = Type::from_str(&v.fields[i]);
+                                    let field_type = Type::from_str(&v.fields[i]).unwrap();
                                     self.env.insert_local(binding.clone(), field_type);
                                 }
                             } else {
@@ -710,7 +715,7 @@ impl TypeChecker {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
                         && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field)
                     {
-                        return Ok(Type::from_str(&sf.typ));
+                        return Ok(Type::from_str(&sf.typ).unwrap());
                     }
                     return Err(TypeError::new(format!("unknown field: {}", field)));
                 }
@@ -727,7 +732,7 @@ impl TypeChecker {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
                         && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field)
                     {
-                        let expected = Type::from_str(&sf.typ);
+                        let expected = Type::from_str(&sf.typ).unwrap();
                         if !self.types_compatible(&value_type, &expected) {
                             return Err(TypeError::new(format!(
                                 "cannot assign {} to field {} of type {}",
@@ -748,7 +753,7 @@ impl TypeChecker {
                     for (fname, fval) in fields {
                         let val_type = self.infer_expr(fval)?;
                         if let Some(sf) = sdef.fields.iter().find(|f| &f.name == fname) {
-                            let expected = Type::from_str(&sf.typ);
+                            let expected = Type::from_str(&sf.typ).unwrap();
                             if !self.types_compatible(&val_type, &expected) {
                                 return Err(TypeError::new(format!(
                                     "field {} has type {}, got {}",

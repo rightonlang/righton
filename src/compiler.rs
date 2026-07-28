@@ -931,10 +931,6 @@ impl LLVMTextGen {
                     )
                     .unwrap();
                 }
-                _ => {
-                    // fallback for unsupported types
-                    // handled as pointer
-                }
             }
             locals.insert(param.clone(), (param_type, alloca_name, false));
         }
@@ -1158,15 +1154,7 @@ impl LLVMTextGen {
                 }
                 let inner_type = self.infer_expr_type(inner, params, locals);
                 if inner_type == "void" {
-                    if matches!(inner.as_ref(), Expr::Literal(Literal::Float(_), _)) {
-                        "double"
-                    } else if matches!(inner.as_ref(), Expr::Literal(Literal::Bool(_), _)) {
-                        "i32"
-                    } else if matches!(inner.as_ref(), Expr::Literal(Literal::Int(_), _)) {
-                        "i32"
-                    } else {
-                        "i32"
-                    }
+                    "i32"
                 } else {
                     inner_type
                 }
@@ -1393,7 +1381,6 @@ impl LLVMTextGen {
             Type::Void => "void".to_string(),
             Type::Unknown => "unknown".to_string(),
             Type::Generic(name) => format!("generic_{}", name),
-            _ => "i8*".to_string(),
         }
     }
 
@@ -1814,17 +1801,16 @@ impl LLVMTextGen {
                                         if expected == "i8*" || expected == "%String*" {
                                             return true;
                                         }
-                                    } else if func.starts_with("__rt_") {
-                                        return true;
-                                    } else if stdlib_enabled
-                                        && matches!(
-                                            func.as_str(),
-                                            "print"
-                                                | "len"
-                                                | "read_file"
-                                                | "write_file"
-                                                | "is_empty"
-                                        )
+                                    } else if func.starts_with("__rt_")
+                                        || (stdlib_enabled
+                                            && matches!(
+                                                func.as_str(),
+                                                "print"
+                                                    | "len"
+                                                    | "read_file"
+                                                    | "write_file"
+                                                    | "is_empty"
+                                            ))
                                     {
                                         return true;
                                     }
@@ -4831,7 +4817,7 @@ impl LLVMTextGen {
                 let enum_defs = self.enum_defs.clone();
                 let edef = enum_defs.iter().find(|e| e.name == *enum_name);
                 let mut discriminant = 0i32;
-                let mut payload_size = 0i32;
+                let mut _payload_size = 0i32;
                 let mut max_payload = 0i32;
                 if let Some(e) = edef {
                     for (i, v) in e.variants.iter().enumerate() {
@@ -4845,7 +4831,7 @@ impl LLVMTextGen {
                         }
                         if v.name == *variant_name {
                             discriminant = i as i32;
-                            payload_size = v_size;
+                            _payload_size = v_size;
                         }
                         if v_size > max_payload {
                             max_payload = v_size;
