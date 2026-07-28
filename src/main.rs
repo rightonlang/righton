@@ -45,8 +45,7 @@ fn extract_line_col(err: &str) -> Option<(usize, usize)> {
     if let Some(start) = err.find("(line=") {
         let tail = &err[start + 6..];
         let parts: Vec<&str> = tail.split(&[',', ')'][..]).collect();
-        let line = parts
-            .get(0)
+        let line = parts.first()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
         let col = err
@@ -59,23 +58,21 @@ fn extract_line_col(err: &str) -> Option<(usize, usize)> {
     }
     if let Some(start) = err.find("line ") {
         let tail = &err[start + 5..];
-        if let Some((line_str, _)) = tail.split_once(':') {
-            if let Ok(line) = line_str.trim().parse::<usize>() {
+        if let Some((line_str, _)) = tail.split_once(':')
+            && let Ok(line) = line_str.trim().parse::<usize>() {
                 return Some((line, 0));
             }
-        }
     }
     None
 }
 
 fn format_error(source: &str, err: &str, _is_parse: bool, error_format: &Option<String>) -> String {
-    if let Some(format) = error_format {
-        if format == "json" {
+    if let Some(format) = error_format
+        && format == "json" {
             let diag = Diagnostic::error(Some("E0000"), err)
                 .with_span(extract_span(err));
             return serde_json::to_string_pretty(&diag.to_json()).unwrap_or_else(|_| err.to_string());
         }
-    }
     
     let mut result = format!("Error: {}", err);
     if let Some((line, col)) = extract_line_col(err) {
