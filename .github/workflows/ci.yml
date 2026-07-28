@@ -2,27 +2,16 @@ name: CI
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["development"]
   pull_request:
 
 jobs:
-  build:
-    name: Build and test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable]
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          profile: minimal
-          override: true
 
       - name: Cache Cargo registry, git index, and target
         uses: actions/cache@v4
@@ -31,9 +20,91 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: lint-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            lint-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo registry and git index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: audit-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            audit-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit
+
+  build:
+    name: Build and test on ${{ matrix.os }} (${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable, beta]
+        include:
+          - os: ubuntu-latest
+            rust: nightly
+        exclude:
+          - os: windows-latest
+            rust: nightly
+          - os: macos-latest
+            rust: nightly
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          profile: minimal
+
+      - name: Cache Cargo registry, git index, and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.rust }}-cargo-
+
+      - name: Cache vcpkg on Windows
+        if: runner.os == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-
 
       - name: Install LLVM 20.1 on Linux and Windows
         if: runner.os != 'macOS'
@@ -54,7 +125,7 @@ jobs:
         run: echo "VCPKG_ROOT=C:/vcpkg" >> $GITHUB_ENV
 
       - name: Export vcpkg environment variables
-        if: runner.os == 'Windows'
+        if: runner.os == 'windows'
         shell: bash
         run: |
           echo "LIB=$VCPKG_ROOT/installed/x64-windows-static/lib;$LIB" >> $GITHUB_ENV
@@ -64,12 +135,9 @@ jobs:
           echo "INCLUDE=$VCPKG_ROOT/installed/x64-windows-static/include;$INCLUDE" >> $GITHUB_ENV
           echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/lib" >> $GITHUB_ENV
           echo "RUSTFLAGS=-L native=$VCPKG_ROOT/installed/x64-windows-static/debug/lib" >> $GITHUB_ENV
-          ls $VCPKG_ROOT/installed/x64-windows-static/debug/lib/
-          ls $VCPKG_ROOT/installed/x64-windows-static/lib/
           cp $VCPKG_ROOT/installed/x64-windows-static/lib/libxml2.lib $VCPKG_ROOT/installed/x64-windows-static/lib/libxml2s.lib
           cp $VCPKG_ROOT/installed/x64-windows-static/debug/lib/libxml2.lib $VCPKG_ROOT/installed/x64-windows-static/debug/lib/libxml2s.lib
 
-          
       - name: Install LLVM 20.1 on macOS
         if: runner.os == 'macOS'
         run: |
@@ -98,14 +166,32 @@ jobs:
         if: runner.os != 'macOS'
         run: cargo test --verbose
 
-      - name: Upload compiler artifact
+      - name: Build release
+        run: cargo build --release --verbose
+
+      - name: Run release tests
+        run: cargo test --release --verbose
+
+      - name: Upload compiler debug artifact
         uses: actions/upload-artifact@v4
         with:
-          name: righton-${{ matrix.os }}
+          name: righton-${{ matrix.os }}-${{ matrix.rust }}-debug
           path: target/debug/righton*
 
-      - name: Upload LSP artifact
+      - name: Upload LSP debug artifact
         uses: actions/upload-artifact@v4
         with:
-          name: righton-lsp-${{ matrix.os }}
+          name: righton-lsp-${{ matrix.os }}-${{ matrix.rust }}-debug
           path: target/debug/righton-lsp*
+
+      - name: Upload compiler release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: righton-${{ matrix.os }}-${{ matrix.rust }}-release
+          path: target/release/righton*
+
+      - name: Upload LSP release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: righton-lsp-${{ matrix.os }}-${{ matrix.rust }}-release
+          path: target/release/righton-lsp*
