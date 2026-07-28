@@ -1,25 +1,61 @@
 use righton::lexer::Lexer;
 use righton::parser::Parser;
 use righton::type_checker::TypeChecker;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 
 const KEYWORDS: &[&str] = &[
-    "fn", "let", "const", "return", "if", "else", "elif", "while",
-    "for", "in", "break", "continue", "struct", "enum", "impl", "type",
-    "match", "import", "extern", "mut", "and", "or", "not", "true", "false",
+    "fn", "let", "const", "return", "if", "else", "elif", "while", "for", "in", "break",
+    "continue", "struct", "enum", "impl", "type", "match", "import", "extern", "mut", "and", "or",
+    "not", "true", "false",
 ];
 
-const BUILTIN_TYPES: &[&str] = &["i32", "f64", "bool", "str", "string", "ptr", "float", "double"];
+const BUILTIN_TYPES: &[&str] = &[
+    "i32", "f64", "bool", "str", "string", "ptr", "float", "double",
+];
 
 const STDLIB_FUNCTIONS: &[&str] = &[
-    "print", "print_int", "print_float", "len", "read_file", "write_file",
-    "exit", "is_empty", "contains", "starts_with", "ends_with", "substr",
-    "trim", "to_uppercase", "to_lowercase", "to_string", "str_repeat",
-    "to_int", "to_float", "to_hex", "abs", "abs_f", "floor", "ceil", "round",
-    "sqrt", "sin", "cos", "tan", "min", "max", "pow", "read_line",
-    "read_int", "read_float", "asm", "list_len", "list_push", "list_pop", "list_free",
+    "print",
+    "print_int",
+    "print_float",
+    "len",
+    "read_file",
+    "write_file",
+    "exit",
+    "is_empty",
+    "contains",
+    "starts_with",
+    "ends_with",
+    "substr",
+    "trim",
+    "to_uppercase",
+    "to_lowercase",
+    "to_string",
+    "str_repeat",
+    "to_int",
+    "to_float",
+    "to_hex",
+    "abs",
+    "abs_f",
+    "floor",
+    "ceil",
+    "round",
+    "sqrt",
+    "sin",
+    "cos",
+    "tan",
+    "min",
+    "max",
+    "pow",
+    "read_line",
+    "read_int",
+    "read_float",
+    "asm",
+    "list_len",
+    "list_push",
+    "list_pop",
+    "list_free",
 ];
 
 fn read_message() -> Option<String> {
@@ -114,7 +150,8 @@ fn extract_line_col(msg: &str) -> (usize, usize) {
     if let Some(start) = msg.find("(line=") {
         let tail = &msg[start + 6..];
         let parts: Vec<&str> = tail.split(&[',', ')'][..]).collect();
-        let line = parts.first()
+        let line = parts
+            .first()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
         let col = msg
@@ -128,50 +165,63 @@ fn extract_line_col(msg: &str) -> (usize, usize) {
     if let Some(start) = msg.find("line ") {
         let tail = &msg[start + 5..];
         if let Some((line_str, _)) = tail.split_once(':')
-            && let Ok(line) = line_str.trim().parse::<usize>() {
-                return (line, 0);
-            }
+            && let Ok(line) = line_str.trim().parse::<usize>()
+        {
+            return (line, 0);
+        }
     }
     (0, 0)
 }
 
 fn keyword_completions() -> Vec<Value> {
-    KEYWORDS.iter().map(|k| {
-        json!({
-            "label": k,
-            "kind": 14,
-            "detail": "keyword",
-            "insertText": k
+    KEYWORDS
+        .iter()
+        .map(|k| {
+            json!({
+                "label": k,
+                "kind": 14,
+                "detail": "keyword",
+                "insertText": k
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn type_completions() -> Vec<Value> {
-    BUILTIN_TYPES.iter().map(|t| {
-        json!({
-            "label": t,
-            "kind": 22,
-            "detail": "type"
+    BUILTIN_TYPES
+        .iter()
+        .map(|t| {
+            json!({
+                "label": t,
+                "kind": 22,
+                "detail": "type"
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn stdlib_completions() -> Vec<Value> {
-    STDLIB_FUNCTIONS.iter().map(|f| {
-        json!({
-            "label": f,
-            "kind": 3,
-            "detail": "function (std)",
-            "insertText": f
+    STDLIB_FUNCTIONS
+        .iter()
+        .map(|f| {
+            json!({
+                "label": f,
+                "kind": 3,
+                "detail": "function (std)",
+                "insertText": f
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn context_keywords(line: &str) -> Vec<Value> {
     let trimmed = line.trim();
     let mut items = Vec::new();
     if trimmed.is_empty() || trimmed.ends_with(':') || trimmed.ends_with('{') {
-        for k in &["fn", "let", "const", "if", "while", "for", "match", "return", "import", "struct", "enum", "impl", "type"] {
+        for k in &[
+            "fn", "let", "const", "if", "while", "for", "match", "return", "import", "struct",
+            "enum", "impl", "type",
+        ] {
             items.push(json!({
                 "label": k,
                 "kind": 14,
@@ -218,10 +268,11 @@ fn get_word_at(line: &str, character: usize) -> Option<String> {
     let mut end = character;
     while start > 0 {
         if let Some(ch) = line[..start].chars().next_back()
-            && (ch.is_ascii_alphanumeric() || ch == '_') {
-                start = start.saturating_sub(ch.len_utf8());
-                continue;
-            }
+            && (ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            start = start.saturating_sub(ch.len_utf8());
+            continue;
+        }
         break;
     }
     while let Some(ch) = line[end..].chars().next() {
@@ -231,7 +282,9 @@ fn get_word_at(line: &str, character: usize) -> Option<String> {
         }
         break;
     }
-    if start == end { return None; }
+    if start == end {
+        return None;
+    }
     Some(line[start..end].to_string())
 }
 
@@ -253,7 +306,9 @@ struct DocumentStore {
 
 impl DocumentStore {
     fn new() -> Self {
-        Self { docs: HashMap::new() }
+        Self {
+            docs: HashMap::new(),
+        }
     }
     fn open(&mut self, uri: String, text: String) {
         self.docs.insert(uri, text);
@@ -314,23 +369,33 @@ fn run_server() {
             "textDocument/didOpen" => {
                 if let (Some(uri), Some(text)) = (
                     get_string(&params, "uri").or_else(|| {
-                        params.get("textDocument").and_then(|td| get_string(td, "uri"))
+                        params
+                            .get("textDocument")
+                            .and_then(|td| get_string(td, "uri"))
                     }),
                     get_string(&params, "text").or_else(|| {
-                        params.get("textDocument").and_then(|td| get_string(td, "text"))
+                        params
+                            .get("textDocument")
+                            .and_then(|td| get_string(td, "text"))
                     }),
                 ) {
                     store.open(uri.clone(), text.clone());
                     let diagnostics = run_diagnostics(&uri, &text);
                     let diag_params = json!({"uri": uri, "diagnostics": diagnostics});
-                    send_message(&make_notification("textDocument/publishDiagnostics", diag_params));
+                    send_message(&make_notification(
+                        "textDocument/publishDiagnostics",
+                        diag_params,
+                    ));
                 }
             }
             "textDocument/didChange" => {
                 if let Some(uri) = get_string(&params, "uri").or_else(|| {
-                    params.get("textDocument").and_then(|td| get_string(td, "uri"))
+                    params
+                        .get("textDocument")
+                        .and_then(|td| get_string(td, "uri"))
                 }) {
-                    let text = params.get("contentChanges")
+                    let text = params
+                        .get("contentChanges")
                         .and_then(|c| c.get(0))
                         .and_then(|c| c.get("text"))
                         .and_then(|t| t.as_str())
@@ -339,23 +404,38 @@ fn run_server() {
                     let text = store.get(&uri).unwrap_or("");
                     let diagnostics = run_diagnostics(&uri, text);
                     let diag_params = json!({"uri": uri, "diagnostics": diagnostics});
-                    send_message(&make_notification("textDocument/publishDiagnostics", diag_params));
+                    send_message(&make_notification(
+                        "textDocument/publishDiagnostics",
+                        diag_params,
+                    ));
                 }
             }
             "textDocument/didClose" => {
                 if let Some(uri) = get_string(&params, "uri").or_else(|| {
-                    params.get("textDocument").and_then(|td| get_string(td, "uri"))
+                    params
+                        .get("textDocument")
+                        .and_then(|td| get_string(td, "uri"))
                 }) {
                     store.close(&uri);
                 }
             }
             "textDocument/completion" => {
-                let uri_str = get_string(&params, "uri").or_else(|| {
-                    params.get("textDocument").and_then(|td| get_string(td, "uri"))
-                }).unwrap_or_default();
+                let uri_str = get_string(&params, "uri")
+                    .or_else(|| {
+                        params
+                            .get("textDocument")
+                            .and_then(|td| get_string(td, "uri"))
+                    })
+                    .unwrap_or_default();
                 let text = store.get(&uri_str).unwrap_or("");
-                let line = params.pointer("/position/line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let character = params.pointer("/position/character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let line = params
+                    .pointer("/position/line")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                let character = params
+                    .pointer("/position/character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
                 let source_line = text.lines().nth(line).unwrap_or("");
                 let prefix = get_word_prefix(source_line, character);
                 let mut items = Vec::new();
@@ -364,7 +444,12 @@ fn run_server() {
                 items.extend(stdlib_completions());
                 items.extend(context_keywords(source_line));
                 if !prefix.is_empty() {
-                    items.retain(|item| item["label"].as_str().map(|label| label.starts_with(&prefix)).unwrap_or(true));
+                    items.retain(|item| {
+                        item["label"]
+                            .as_str()
+                            .map(|label| label.starts_with(&prefix))
+                            .unwrap_or(true)
+                    });
                 }
                 let result = json!({"isIncomplete": false, "items": items});
                 if !is_notification {
@@ -372,12 +457,22 @@ fn run_server() {
                 }
             }
             "textDocument/hover" => {
-                let uri_str = get_string(&params, "uri").or_else(|| {
-                    params.get("textDocument").and_then(|td| get_string(td, "uri"))
-                }).unwrap_or_default();
+                let uri_str = get_string(&params, "uri")
+                    .or_else(|| {
+                        params
+                            .get("textDocument")
+                            .and_then(|td| get_string(td, "uri"))
+                    })
+                    .unwrap_or_default();
                 let text = store.get(&uri_str).unwrap_or("");
-                let line = params.pointer("/position/line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let character = params.pointer("/position/character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let line = params
+                    .pointer("/position/line")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                let character = params
+                    .pointer("/position/character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
                 if let Some(hover) = make_hover(text, line, character) {
                     if !is_notification {
                         send_message(&make_response(id, hover));
@@ -393,7 +488,11 @@ fn run_server() {
             }
             _ => {
                 if !is_notification {
-                    send_message(&make_error(id, -32601, &format!("method not found: {}", method)));
+                    send_message(&make_error(
+                        id,
+                        -32601,
+                        &format!("method not found: {}", method),
+                    ));
                 }
             }
         }

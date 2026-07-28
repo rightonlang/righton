@@ -134,7 +134,8 @@ impl LLVMTextGen {
         self.enum_defs = program.enums.clone();
         self.type_aliases.clear();
         for alias in &program.type_aliases {
-            self.type_aliases.insert(alias.name.clone(), alias.value.clone());
+            self.type_aliases
+                .insert(alias.name.clone(), alias.value.clone());
         }
         self.function_sigs = self.build_function_sigs(&program);
 
@@ -149,7 +150,7 @@ impl LLVMTextGen {
             .map_err(|e| CompileError::new(e.to_string()))?;
 
         let mut ir = String::new();
-        if program.profile != "release"  {
+        if program.profile != "release" {
             ir.push_str(format!("; ModuleID = 'righton_{}'\n", program.name).as_str());
         } else {
             ir.push_str(format!("; ModuleID = '{}'\n", program.name).as_str());
@@ -177,13 +178,13 @@ impl LLVMTextGen {
         ir.push_str("declare i32 @atoi(i8*)\n");
         ir.push_str("declare double @atof(i8*)\n");
         ir.push_str("declare double @floor(double)\n");
-ir.push_str("declare double @ceil(double)\n");
-ir.push_str("declare double @round(double)\n");
-ir.push_str("declare double @sqrt(double)\n");
-ir.push_str("declare double @sin(double)\n");
-ir.push_str("declare double @cos(double)\n");
-ir.push_str("declare double @tan(double)\n");
-ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
+        ir.push_str("declare double @ceil(double)\n");
+        ir.push_str("declare double @round(double)\n");
+        ir.push_str("declare double @sqrt(double)\n");
+        ir.push_str("declare double @sin(double)\n");
+        ir.push_str("declare double @cos(double)\n");
+        ir.push_str("declare double @tan(double)\n");
+        ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
         ir.push_str("@stdin = external global i8*\n");
         ir.push_str("@.global_buffer = private global [1024 x i8] zeroinitializer\n\n");
 
@@ -324,8 +325,14 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                 self.collect_calls(r, calls);
             }
             Expr::Unary(_, inner, _) | Expr::Return(inner, _) => self.collect_calls(inner, calls),
-            Expr::Let { value, .. } | Expr::Assign { value, .. } => self.collect_calls(value, calls),
-            Expr::If { condition, then_branch, else_branch } => {
+            Expr::Let { value, .. } | Expr::Assign { value, .. } => {
+                self.collect_calls(value, calls)
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.collect_calls(condition, calls);
                 for stmt in &then_branch.stmts {
                     self.collect_calls(stmt, calls);
@@ -342,13 +349,22 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                     self.collect_calls(stmt, calls);
                 }
             }
-            Expr::For { variable: _, iterable, body } => {
+            Expr::For {
+                variable: _,
+                iterable,
+                body,
+            } => {
                 self.collect_calls(iterable, calls);
                 for stmt in &body.stmts {
                     self.collect_calls(stmt, calls);
                 }
             }
-            Expr::ForRange { variable: _, start, end, body } => {
+            Expr::ForRange {
+                variable: _,
+                start,
+                end,
+                body,
+            } => {
                 self.collect_calls(start, calls);
                 self.collect_calls(end, calls);
                 for stmt in &body.stmts {
@@ -419,7 +435,10 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
         active: &mut Vec<String>,
     ) -> CompileResult<Program> {
         if active.iter().any(|item| item == spec) {
-            return Err(CompileError::new(format!("circular import detected: {}", spec)));
+            return Err(CompileError::new(format!(
+                "circular import detected: {}",
+                spec
+            )));
         }
 
         if loaded.contains(spec) {
@@ -436,8 +455,9 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
         }
 
         let path = self.resolve_module_path(spec);
-        let code = fs::read_to_string(&path)
-            .map_err(|e| CompileError::new(format!("failed to read import '{}': {}", path.display(), e)))?;
+        let code = fs::read_to_string(&path).map_err(|e| {
+            CompileError::new(format!("failed to read import '{}': {}", path.display(), e))
+        })?;
 
         active.push(spec.to_string());
         let module_name = path
@@ -464,12 +484,19 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
     fn sanitize_ir_name(&self, value: &str) -> String {
         value
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect()
     }
 
     fn mangle_program(&mut self, program: Program, prefix: &str) -> Program {
-        let function_names: HashSet<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+        let function_names: HashSet<String> =
+            program.functions.iter().map(|f| f.name.clone()).collect();
         let mut alias_map = HashMap::new();
 
         for name in &function_names {
@@ -544,8 +571,17 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                 Box::new(self.rename_calls(*r, alias_map, function_names)),
                 SourceSpan::unknown(),
             ),
-            Expr::Unary(op, inner, _) => Expr::Unary(op, Box::new(self.rename_calls(*inner, alias_map, function_names)), SourceSpan::unknown()),
-            Expr::Let { name, typ, value, is_const } => Expr::Let {
+            Expr::Unary(op, inner, _) => Expr::Unary(
+                op,
+                Box::new(self.rename_calls(*inner, alias_map, function_names)),
+                SourceSpan::unknown(),
+            ),
+            Expr::Let {
+                name,
+                typ,
+                value,
+                is_const,
+            } => Expr::Let {
                 name,
                 typ,
                 value: Box::new(self.rename_calls(*value, alias_map, function_names)),
@@ -555,8 +591,15 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                 name,
                 value: Box::new(self.rename_calls(*value, alias_map, function_names)),
             },
-            Expr::Return(inner, _) => Expr::Return(Box::new(self.rename_calls(*inner, alias_map, function_names)), SourceSpan::unknown()),
-            Expr::If { condition, then_branch, else_branch } => Expr::If {
+            Expr::Return(inner, _) => Expr::Return(
+                Box::new(self.rename_calls(*inner, alias_map, function_names)),
+                SourceSpan::unknown(),
+            ),
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => Expr::If {
                 condition: Box::new(self.rename_calls(*condition, alias_map, function_names)),
                 then_branch: Box::new(Block {
                     stmts: then_branch
@@ -565,13 +608,15 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                         .map(|stmt| self.rename_calls(stmt, alias_map, function_names))
                         .collect(),
                 }),
-                else_branch: else_branch.map(|branch| Box::new(Block {
-                    stmts: branch
-                        .stmts
-                        .into_iter()
-                        .map(|stmt| self.rename_calls(stmt, alias_map, function_names))
-                        .collect(),
-                })),
+                else_branch: else_branch.map(|branch| {
+                    Box::new(Block {
+                        stmts: branch
+                            .stmts
+                            .into_iter()
+                            .map(|stmt| self.rename_calls(stmt, alias_map, function_names))
+                            .collect(),
+                    })
+                }),
             },
             Expr::FString(elements, _) => Expr::FString(
                 elements
@@ -590,7 +635,11 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                         .collect(),
                 }),
             },
-            Expr::For { variable, iterable, body } => Expr::For {
+            Expr::For {
+                variable,
+                iterable,
+                body,
+            } => Expr::For {
                 variable,
                 iterable: Box::new(self.rename_calls(*iterable, alias_map, function_names)),
                 body: Box::new(Block {
@@ -601,7 +650,12 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                         .collect(),
                 }),
             },
-            Expr::ForRange { variable, start, end, body } => Expr::ForRange {
+            Expr::ForRange {
+                variable,
+                start,
+                end,
+                body,
+            } => Expr::ForRange {
                 variable,
                 start: Box::new(self.rename_calls(*start, alias_map, function_names)),
                 end: Box::new(self.rename_calls(*end, alias_map, function_names)),
@@ -616,7 +670,10 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
             Expr::Break => Expr::Break,
             Expr::Continue => Expr::Continue,
             Expr::List(items) => Expr::List(
-                items.into_iter().map(|item| self.rename_calls(item, alias_map, function_names)).collect()
+                items
+                    .into_iter()
+                    .map(|item| self.rename_calls(item, alias_map, function_names))
+                    .collect(),
             ),
             Expr::Index { target, index } => Expr::Index {
                 target: Box::new(self.rename_calls(*target, alias_map, function_names)),
@@ -629,10 +686,13 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
             },
             Expr::Match { expr, arms } => Expr::Match {
                 expr: Box::new(self.rename_calls(*expr, alias_map, function_names)),
-                arms: arms.into_iter().map(|arm| crate::ast::MatchArm {
-                    pattern: arm.pattern,
-                    body: Box::new(self.rename_calls(*arm.body, alias_map, function_names)),
-                }).collect(),
+                arms: arms
+                    .into_iter()
+                    .map(|arm| crate::ast::MatchArm {
+                        pattern: arm.pattern,
+                        body: Box::new(self.rename_calls(*arm.body, alias_map, function_names)),
+                    })
+                    .collect(),
             },
             other => other,
         }
@@ -666,19 +726,23 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
 
             // 2) try executable-relative path (next to the exe or in an adjacent `stdlib` folder)
             if let Ok(exe_path) = std::env::current_exe()
-                && let Some(dir) = exe_path.parent() {
-                    let candidate = dir.join("stdlib").join("std.ro");
-                    if candidate.exists() {
-                        return candidate;
-                    }
-                    let candidate2 = dir.join("std.ro");
-                    if candidate2.exists() {
-                        return candidate2;
-                    }
+                && let Some(dir) = exe_path.parent()
+            {
+                let candidate = dir.join("stdlib").join("std.ro");
+                if candidate.exists() {
+                    return candidate;
                 }
+                let candidate2 = dir.join("std.ro");
+                if candidate2.exists() {
+                    return candidate2;
+                }
+            }
 
             // 3) try current working directory
-            let cwd_candidate = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("stdlib").join("std.ro");
+            let cwd_candidate = std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("stdlib")
+                .join("std.ro");
             if cwd_candidate.exists() {
                 return cwd_candidate;
             }
@@ -700,7 +764,9 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
         if path.is_absolute() {
             path
         } else {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
         }
     }
 
@@ -755,7 +821,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
         if func.name == "main" {
             return "i32";
         }
-        
+
         let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
         for (i, p) in func.params.iter().enumerate() {
             let param_type = if let Some(Some(t)) = func.param_types.get(i) {
@@ -765,7 +831,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
             };
             temp_locals.insert(p.clone(), (param_type, format!("arg{}", i), false));
         }
-        
+
         self.find_return_in_exprs(&func.body, &func.params, &temp_locals, sigs)
     }
 
@@ -830,20 +896,40 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
             match param_type {
                 Type::I32 => {
                     writeln!(&mut self.functions, "  %{} = alloca i32", alloca_name).unwrap();
-                    writeln!(&mut self.functions, "  store i32 %arg{}, i32* %{}", i, alloca_name).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  store i32 %arg{}, i32* %{}",
+                        i, alloca_name
+                    )
+                    .unwrap();
                 }
                 Type::F64 => {
                     writeln!(&mut self.functions, "  %{} = alloca double", alloca_name).unwrap();
-                    writeln!(&mut self.functions, "  store double %arg{}, double* %{}", i, alloca_name).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  store double %arg{}, double* %{}",
+                        i, alloca_name
+                    )
+                    .unwrap();
                 }
                 Type::Ptr => {
                     // For pointer params, arg[i] is already a pointer value, store it
                     writeln!(&mut self.functions, "  %{} = alloca i8*", alloca_name).unwrap();
-                    writeln!(&mut self.functions, "  store i8* %arg{}, i8** %{}", i, alloca_name).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  store i8* %arg{}, i8** %{}",
+                        i, alloca_name
+                    )
+                    .unwrap();
                 }
                 _ => {
                     writeln!(&mut self.functions, "  %{} = alloca i8*", alloca_name).unwrap();
-                    writeln!(&mut self.functions, "  store i8* %arg{}, i8** %{}", i, alloca_name).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  store i8* %arg{}, i8** %{}",
+                        i, alloca_name
+                    )
+                    .unwrap();
                 }
                 _ => {
                     // fallback for unsupported types
@@ -890,7 +976,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
             "void"
         };
 
-writeln!(
+        writeln!(
             &mut self.functions,
             "declare {} @{}({})",
             return_type,
@@ -938,16 +1024,27 @@ writeln!(
             Expr::StructLiteral { .. } => "i8*",
             Expr::EnumLiteral { .. } => "i8*",
             Expr::Tuple(elements, _) => {
-                if elements.is_empty() { "void" } else { "i8*" }
+                if elements.is_empty() {
+                    "void"
+                } else {
+                    "i8*"
+                }
             }
-            Expr::TupleAccess { target: _, index: _ } => {
-                "i32"
-            }
+            Expr::TupleAccess {
+                target: _,
+                index: _,
+            } => "i32",
             Expr::FieldAssign { .. } => "void",
             Expr::FieldAccess { target, field } => {
                 let target_name = if let Expr::Identifier(name, _) = target.as_ref() {
-                    if locals.contains_key(name) { name.clone() } else { String::new() }
-                } else { String::new() };
+                    if locals.contains_key(name) {
+                        name.clone()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
                 if !target_name.is_empty() {
                     for sdef in &self.struct_defs {
                         for sf in &sdef.fields {
@@ -999,31 +1096,46 @@ writeln!(
             }
             Expr::Call { func, .. } => self
                 .builtin_return_type(func)
-                .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
+                .or_else(|| {
+                    self.function_sigs
+                        .get(&self.resolve_function_name(func))
+                        .copied()
+                })
                 .unwrap_or("void"),
             Expr::Binary(l, op, r, _) => {
-                let is_comparison = matches!(*op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
+                let is_comparison = matches!(
+                    *op,
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                );
                 let is_logical = matches!(*op, BinOp::And | BinOp::Or);
                 if is_comparison || is_logical {
                     return "i32";
                 }
-                if matches!(l.as_ref(), Expr::Literal(Literal::Float(_), _)) || matches!(r.as_ref(), Expr::Literal(Literal::Float(_), _)) {
+                if matches!(l.as_ref(), Expr::Literal(Literal::Float(_), _))
+                    || matches!(r.as_ref(), Expr::Literal(Literal::Float(_), _))
+                {
                     return "double";
                 }
-                if matches!(l.as_ref(), Expr::Literal(Literal::Int(_), _)) || matches!(r.as_ref(), Expr::Literal(Literal::Int(_), _)) {
+                if matches!(l.as_ref(), Expr::Literal(Literal::Int(_), _))
+                    || matches!(r.as_ref(), Expr::Literal(Literal::Int(_), _))
+                {
                     return "i32";
                 }
-                if matches!(l.as_ref(), Expr::Literal(Literal::Bool(_), _)) || matches!(r.as_ref(), Expr::Literal(Literal::Bool(_), _)) {
+                if matches!(l.as_ref(), Expr::Literal(Literal::Bool(_), _))
+                    || matches!(r.as_ref(), Expr::Literal(Literal::Bool(_), _))
+                {
                     return "i32";
                 }
                 if let Expr::Identifier(ln, _) = l.as_ref()
-                    && let Some((Type::F64, _, _)) = locals.get(ln) {
-                        return "double";
-                    }
+                    && let Some((Type::F64, _, _)) = locals.get(ln)
+                {
+                    return "double";
+                }
                 if let Expr::Identifier(rn, _) = r.as_ref()
-                    && let Some((Type::F64, _, _)) = locals.get(rn) {
-                        return "double";
-                    }
+                    && let Some((Type::F64, _, _)) = locals.get(rn)
+                {
+                    return "double";
+                }
                 let lt = self.infer_expr_type(l, params, locals);
                 let rt = self.infer_expr_type(r, params, locals);
                 if lt == "double" || rt == "double" {
@@ -1059,10 +1171,24 @@ writeln!(
                     inner_type
                 }
             }
-            Expr::If { then_branch, else_branch, .. } => {
-                let then_type = self.find_return_in_exprs(&then_branch.stmts, params, locals, &self.function_sigs);
+            Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let then_type = self.find_return_in_exprs(
+                    &then_branch.stmts,
+                    params,
+                    locals,
+                    &self.function_sigs,
+                );
                 if let Some(else_block) = else_branch {
-                    let else_type = self.find_return_in_exprs(&else_block.stmts, params, locals, &self.function_sigs);
+                    let else_type = self.find_return_in_exprs(
+                        &else_block.stmts,
+                        params,
+                        locals,
+                        &self.function_sigs,
+                    );
                     if then_type != "void" && else_type != "void" && then_type == else_type {
                         then_type
                     } else {
@@ -1078,9 +1204,10 @@ writeln!(
 
     fn infer_return_type(&self, body: &[Expr], params: &[String]) -> &'static str {
         if let Some(name) = &self.current_function
-            && name == "main" {
-                return "i32";
-            }
+            && name == "main"
+        {
+            return "i32";
+        }
         let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
         for (i, p) in params.iter().enumerate() {
             let param_type = self.infer_param_type(body, p, params);
@@ -1100,13 +1227,20 @@ writeln!(
             if let Expr::Return(inner, _) = expr {
                 return self.infer_expr_type_with_sigs(inner, params, temp_locals, sigs);
             }
-            if let Expr::If { then_branch, else_branch, .. } = expr {
-                let then_type = self.find_return_in_exprs(&then_branch.stmts, params, temp_locals, sigs);
+            if let Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } = expr
+            {
+                let then_type =
+                    self.find_return_in_exprs(&then_branch.stmts, params, temp_locals, sigs);
                 if then_type != "void" {
                     return then_type;
                 }
                 if let Some(else_block) = else_branch {
-                    let else_type = self.find_return_in_exprs(&else_block.stmts, params, temp_locals, sigs);
+                    let else_type =
+                        self.find_return_in_exprs(&else_block.stmts, params, temp_locals, sigs);
                     if else_type != "void" {
                         return else_type;
                     }
@@ -1121,22 +1255,22 @@ writeln!(
             "__rt_strlen" => return Some("i32"),
             "__rt_read_file" => return Some("i8*"),
             "__rt_write_file" => return Some("i32"),
-            "__rt_exit" | "__rt_print_str" | "__rt_print_int" | "__rt_print_float" | "__rt_free" => {
-                return Some("void")
-            }
+            "__rt_exit" | "__rt_print_str" | "__rt_print_int" | "__rt_print_float"
+            | "__rt_free" => return Some("void"),
             "__rt_contains" | "__rt_starts_with" | "__rt_ends_with" | "__rt_to_int"
-            | "__rt_list_len" | "__rt_list_pop" => {
-                return Some("i32")
-            }
-            "__rt_substr" | "__rt_trim" | "__rt_to_uppercase" | "__rt_to_lowercase"
-            | "__rt_read_line" | "__rt_to_string_int" | "__rt_to_string_float" | "__rt_list_push"
-            | "__rt_to_hex" | "__rt_str_repeat" => {
-                return Some("i8*")
-            }
-            "__rt_to_float" | "__rt_floor" | "__rt_ceil" | "__rt_round"
-            | "__rt_sqrt" | "__rt_sin" | "__rt_cos" | "__rt_tan" | "__rt_abs" => {
-                return Some("double")
-            }
+            | "__rt_list_len" | "__rt_list_pop" => return Some("i32"),
+            "__rt_substr"
+            | "__rt_trim"
+            | "__rt_to_uppercase"
+            | "__rt_to_lowercase"
+            | "__rt_read_line"
+            | "__rt_to_string_int"
+            | "__rt_to_string_float"
+            | "__rt_list_push"
+            | "__rt_to_hex"
+            | "__rt_str_repeat" => return Some("i8*"),
+            "__rt_to_float" | "__rt_floor" | "__rt_ceil" | "__rt_round" | "__rt_sqrt"
+            | "__rt_sin" | "__rt_cos" | "__rt_tan" | "__rt_abs" => return Some("double"),
             _ => {}
         }
 
@@ -1149,8 +1283,9 @@ writeln!(
             "len" => Some("i32"),
             "read_file" => Some("i8*"),
             "contains" | "starts_with" | "ends_with" | "to_int" | "is_empty" => Some("i32"),
-            "substr" | "trim" | "to_uppercase" | "to_lowercase" | "to_string"
-            | "read_line" => Some("i8*"),
+            "substr" | "trim" | "to_uppercase" | "to_lowercase" | "to_string" | "read_line" => {
+                Some("i8*")
+            }
             "to_float" | "floor" | "ceil" | "round" => Some("double"),
             "sqrt" | "sin" | "cos" | "tan" => Some("double"),
             "to_hex" | "str_repeat" => Some("i8*"),
@@ -1182,14 +1317,22 @@ writeln!(
         prev[b_chars.len()]
     }
 
-    fn best_suggestion<'a>(&self, name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    fn best_suggestion<'a>(
+        &self,
+        name: &str,
+        candidates: impl IntoIterator<Item = &'a str>,
+    ) -> Option<String> {
         let mut best: Option<(usize, String)> = None;
         for candidate in candidates {
             let dist = Self::levenshtein(name, candidate);
             if dist > 3 {
                 continue;
             }
-            if best.as_ref().map(|(best_dist, _)| dist < *best_dist).unwrap_or(true) {
+            if best
+                .as_ref()
+                .map(|(best_dist, _)| dist < *best_dist)
+                .unwrap_or(true)
+            {
                 best = Some((dist, candidate.to_string()));
             }
         }
@@ -1197,13 +1340,19 @@ writeln!(
     }
 
     fn suggest_function(&self, func: &str) -> Option<String> {
-        if !self.stdlib_enabled && matches!(func, "print" | "len" | "read_file" | "write_file" | "exit") {
+        if !self.stdlib_enabled
+            && matches!(func, "print" | "len" | "read_file" | "write_file" | "exit")
+        {
             return Some(self.stdlib_hint(func).to_string());
         }
 
         let mut candidates: Vec<String> = self.function_sigs.keys().cloned().collect();
         if self.stdlib_enabled {
-            candidates.extend(["print", "len", "read_file", "write_file", "exit", "asm"].into_iter().map(String::from));
+            candidates.extend(
+                ["print", "len", "read_file", "write_file", "exit", "asm"]
+                    .into_iter()
+                    .map(String::from),
+            );
         }
         self.best_suggestion(func, candidates.iter().map(|s| s.as_str()))
     }
@@ -1234,7 +1383,11 @@ writeln!(
             Type::Struct(name) => format!("struct_{}", name),
             Type::Enum(name) => format!("enum_{}", name),
             Type::Tuple(types) => {
-                let inner = types.iter().map(Self::type_to_mangled_suffix).collect::<Vec<_>>().join("_");
+                let inner = types
+                    .iter()
+                    .map(Self::type_to_mangled_suffix)
+                    .collect::<Vec<_>>()
+                    .join("_");
                 format!("tuple_{}", inner)
             }
             Type::Void => "void".to_string(),
@@ -1244,7 +1397,11 @@ writeln!(
         }
     }
 
-    fn monomorphize_function(&mut self, func: &FunctionDef, concrete_types: &[Type]) -> CompileResult<String> {
+    fn monomorphize_function(
+        &mut self,
+        func: &FunctionDef,
+        concrete_types: &[Type],
+    ) -> CompileResult<String> {
         if concrete_types.len() != func.generic_params.len() {
             return Err(CompileError::new(format!(
                 "generic function {} expects {} type parameters, got {}",
@@ -1259,7 +1416,11 @@ writeln!(
             type_map.insert(param.clone(), typ.clone());
         }
 
-        let suffix = concrete_types.iter().map(Self::type_to_mangled_suffix).collect::<Vec<_>>().join("_");
+        let suffix = concrete_types
+            .iter()
+            .map(Self::type_to_mangled_suffix)
+            .collect::<Vec<_>>()
+            .join("_");
         let mangled_name = format!("{}_{}", func.name, suffix);
 
         if self.monomorphized.contains_key(&mangled_name) {
@@ -1285,7 +1446,8 @@ writeln!(
         }
         monomorphized.body = new_body;
 
-        self.monomorphized.insert(mangled_name.clone(), monomorphized);
+        self.monomorphized
+            .insert(mangled_name.clone(), monomorphized);
         Ok(mangled_name)
     }
 
@@ -1307,31 +1469,46 @@ writeln!(
         }
     }
 
-    fn substitute_expr_generics(&mut self, expr: &Expr, type_map: &HashMap<String, Type>) -> CompileResult<Expr> {
+    fn substitute_expr_generics(
+        &mut self,
+        expr: &Expr,
+        type_map: &HashMap<String, Type>,
+    ) -> CompileResult<Expr> {
         match expr {
             Expr::Call { func, args } => {
                 let mut new_args = Vec::new();
                 for arg in args {
                     new_args.push(self.substitute_expr_generics(arg, type_map)?);
                 }
-                Ok(Expr::Call { func: func.clone(), args: new_args })
+                Ok(Expr::Call {
+                    func: func.clone(),
+                    args: new_args,
+                })
             }
-            Expr::Binary(l, op, r, span) => {
-                Ok(Expr::Binary(
-                    Box::new(self.substitute_expr_generics(l, type_map)?),
-                    op.clone(),
-                    Box::new(self.substitute_expr_generics(r, type_map)?),
-                    *span,
-                ))
-            }
-            Expr::Unary(op, inner, span) => {
-                Ok(Expr::Unary(op.clone(), Box::new(self.substitute_expr_generics(inner, type_map)?), *span))
-            }
-            Expr::Return(inner, span) => {
-                Ok(Expr::Return(Box::new(self.substitute_expr_generics(inner, type_map)?), *span))
-            }
-            Expr::Let { name, typ, value, is_const } => {
-                let new_typ = typ.as_ref().map(|t| self.substitute_generic_types(t, type_map));
+            Expr::Binary(l, op, r, span) => Ok(Expr::Binary(
+                Box::new(self.substitute_expr_generics(l, type_map)?),
+                op.clone(),
+                Box::new(self.substitute_expr_generics(r, type_map)?),
+                *span,
+            )),
+            Expr::Unary(op, inner, span) => Ok(Expr::Unary(
+                op.clone(),
+                Box::new(self.substitute_expr_generics(inner, type_map)?),
+                *span,
+            )),
+            Expr::Return(inner, span) => Ok(Expr::Return(
+                Box::new(self.substitute_expr_generics(inner, type_map)?),
+                *span,
+            )),
+            Expr::Let {
+                name,
+                typ,
+                value,
+                is_const,
+            } => {
+                let new_typ = typ
+                    .as_ref()
+                    .map(|t| self.substitute_generic_types(t, type_map));
                 Ok(Expr::Let {
                     name: name.clone(),
                     typ: new_typ,
@@ -1339,18 +1516,31 @@ writeln!(
                     is_const: *is_const,
                 })
             }
-            Expr::Assign { name, value } => {
-                Ok(Expr::Assign {
-                    name: name.clone(),
-                    value: Box::new(self.substitute_expr_generics(value, type_map)?),
-                })
-            }
-            Expr::If { condition, then_branch, else_branch } => {
-                let new_then = then_branch.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
-                let new_else = else_branch.as_ref().map(|b| {
-                    let stmts = b.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
-                    Ok(Box::new(Block { stmts }))
-                }).transpose()?;
+            Expr::Assign { name, value } => Ok(Expr::Assign {
+                name: name.clone(),
+                value: Box::new(self.substitute_expr_generics(value, type_map)?),
+            }),
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let new_then = then_branch
+                    .stmts
+                    .iter()
+                    .map(|e| self.substitute_expr_generics(e, type_map))
+                    .collect::<CompileResult<Vec<_>>>()?;
+                let new_else = else_branch
+                    .as_ref()
+                    .map(|b| {
+                        let stmts = b
+                            .stmts
+                            .iter()
+                            .map(|e| self.substitute_expr_generics(e, type_map))
+                            .collect::<CompileResult<Vec<_>>>()?;
+                        Ok(Box::new(Block { stmts }))
+                    })
+                    .transpose()?;
                 Ok(Expr::If {
                     condition: Box::new(self.substitute_expr_generics(condition, type_map)?),
                     then_branch: Box::new(Block { stmts: new_then }),
@@ -1358,22 +1548,43 @@ writeln!(
                 })
             }
             Expr::While { condition, body } => {
-                let new_body = body.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+                let new_body = body
+                    .stmts
+                    .iter()
+                    .map(|e| self.substitute_expr_generics(e, type_map))
+                    .collect::<CompileResult<Vec<_>>>()?;
                 Ok(Expr::While {
                     condition: Box::new(self.substitute_expr_generics(condition, type_map)?),
                     body: Box::new(Block { stmts: new_body }),
                 })
             }
-            Expr::For { variable, iterable, body } => {
-                let new_body = body.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+            Expr::For {
+                variable,
+                iterable,
+                body,
+            } => {
+                let new_body = body
+                    .stmts
+                    .iter()
+                    .map(|e| self.substitute_expr_generics(e, type_map))
+                    .collect::<CompileResult<Vec<_>>>()?;
                 Ok(Expr::For {
                     variable: variable.clone(),
                     iterable: Box::new(self.substitute_expr_generics(iterable, type_map)?),
                     body: Box::new(Block { stmts: new_body }),
                 })
             }
-            Expr::ForRange { variable, start, end, body } => {
-                let new_body = body.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+            Expr::ForRange {
+                variable,
+                start,
+                end,
+                body,
+            } => {
+                let new_body = body
+                    .stmts
+                    .iter()
+                    .map(|e| self.substitute_expr_generics(e, type_map))
+                    .collect::<CompileResult<Vec<_>>>()?;
                 Ok(Expr::ForRange {
                     variable: variable.clone(),
                     start: Box::new(self.substitute_expr_generics(start, type_map)?),
@@ -1382,13 +1593,16 @@ writeln!(
                 })
             }
             Expr::Match { expr, arms } => {
-                let new_arms = arms.iter().map(|arm| {
-                    let new_body = self.substitute_expr_generics(&arm.body, type_map)?;
-                    Ok(MatchArm {
-                        pattern: arm.pattern.clone(),
-                        body: Box::new(new_body),
+                let new_arms = arms
+                    .iter()
+                    .map(|arm| {
+                        let new_body = self.substitute_expr_generics(&arm.body, type_map)?;
+                        Ok(MatchArm {
+                            pattern: arm.pattern.clone(),
+                            body: Box::new(new_body),
+                        })
                     })
-                }).collect::<CompileResult<Vec<_>>>()?;
+                    .collect::<CompileResult<Vec<_>>>()?;
                 Ok(Expr::Match {
                     expr: Box::new(self.substitute_expr_generics(expr, type_map)?),
                     arms: new_arms,
@@ -1452,7 +1666,8 @@ writeln!(
                             _ => "i32",
                         }
                     } else {
-                        let inferred = self.infer_param_type(&func_def.body, param, &func_def.params);
+                        let inferred =
+                            self.infer_param_type(&func_def.body, param, &func_def.params);
                         match inferred {
                             Type::I32 => "i32",
                             Type::F64 => "double",
@@ -1510,51 +1725,63 @@ writeln!(
         }
     }
 
-fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) -> Type {
+    fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) -> Type {
         let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
-        
+
         // First: process all params BEFORE the one we're inferring
         for (i, p) in known_params.iter().enumerate() {
             if p == param {
                 break;
             }
             for e in body {
-                if let Expr::Let { name, typ: _, value, is_const: _ } = e
-                    && name == p {
-                        let inferred = self.infer_expr_type(value, known_params, &temp_locals);
-                        let t = match inferred {
-                            "i32" => Type::I32,
-                            "double" => Type::F64,
-                            _ => Type::Ptr,
-                        };
-                        temp_locals.insert(p.to_string(), (t, format!("arg{}", i), false));
-                        break;
-                    }
-            }
-        }
-        
-        // Second: look for let binding of the CURRENT param
-        for expr in body {
-            if let Expr::Let { name, typ, value, is_const: _ } = expr
-                && name == param {
-                    if let Some(t) = typ {
-                        let resolved = self.resolve_type_name(t);
-                        match resolved.as_str() {
-                            "i32" => return Type::I32,
-                            "f64" | "float" => return Type::F64,
-                            "str" | "string" | "ptr" => return Type::Ptr,
-                            _ => {}
-                        }
-                    }
+                if let Expr::Let {
+                    name,
+                    typ: _,
+                    value,
+                    is_const: _,
+                } = e
+                    && name == p
+                {
                     let inferred = self.infer_expr_type(value, known_params, &temp_locals);
-                    return match inferred {
+                    let t = match inferred {
                         "i32" => Type::I32,
                         "double" => Type::F64,
                         _ => Type::Ptr,
                     };
+                    temp_locals.insert(p.to_string(), (t, format!("arg{}", i), false));
+                    break;
                 }
+            }
         }
-        
+
+        // Second: look for let binding of the CURRENT param
+        for expr in body {
+            if let Expr::Let {
+                name,
+                typ,
+                value,
+                is_const: _,
+            } = expr
+                && name == param
+            {
+                if let Some(t) = typ {
+                    let resolved = self.resolve_type_name(t);
+                    match resolved.as_str() {
+                        "i32" => return Type::I32,
+                        "f64" | "float" => return Type::F64,
+                        "str" | "string" | "ptr" => return Type::Ptr,
+                        _ => {}
+                    }
+                }
+                let inferred = self.infer_expr_type(value, known_params, &temp_locals);
+                return match inferred {
+                    "i32" => Type::I32,
+                    "double" => Type::F64,
+                    _ => Type::Ptr,
+                };
+            }
+        }
+
         // Helper: get expected param type for a function
         let param_type_at = |func: &str, idx: usize| -> Option<&'static str> {
             let types = self.get_function_param_types(func);
@@ -1567,8 +1794,17 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
 
         // Third: check if param is used in string context (passed to string functions)
         // This includes direct __rt_* calls AND calls to wrapper functions like print/len/etc
-        let is_used_in_string_context = |body: &[Expr], target_param: &str, stdlib_enabled: bool| -> bool {
-            fn check_expr(expr: &Expr, param: &str, stdlib_enabled: bool, visited: &mut Vec<String>, pt: &dyn Fn(&str, usize) -> Option<&'static str>) -> bool {
+        let is_used_in_string_context = |body: &[Expr],
+                                         target_param: &str,
+                                         stdlib_enabled: bool|
+         -> bool {
+            fn check_expr(
+                expr: &Expr,
+                param: &str,
+                stdlib_enabled: bool,
+                visited: &mut Vec<String>,
+                pt: &dyn Fn(&str, usize) -> Option<&'static str>,
+            ) -> bool {
                 match expr {
                     Expr::Call { func, args } => {
                         for (i, arg) in args.iter().enumerate() {
@@ -1580,14 +1816,24 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                                         }
                                     } else if func.starts_with("__rt_") {
                                         return true;
-                                    } else if stdlib_enabled && matches!(func.as_str(), "print" | "len" | "read_file" | "write_file" | "is_empty") {
+                                    } else if stdlib_enabled
+                                        && matches!(
+                                            func.as_str(),
+                                            "print"
+                                                | "len"
+                                                | "read_file"
+                                                | "write_file"
+                                                | "is_empty"
+                                        )
+                                    {
                                         return true;
                                     }
                                 }
                             } else if let Expr::Call { .. } = arg
-                                && check_expr(arg, param, stdlib_enabled, visited, pt) {
-                                    return true;
-                                }
+                                && check_expr(arg, param, stdlib_enabled, visited, pt)
+                            {
+                                return true;
+                            }
                         }
                         if !visited.contains(func) {
                             visited.push(func.to_string());
@@ -1595,38 +1841,50 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                         false
                     }
                     Expr::Return(inner, _) => check_expr(inner, param, stdlib_enabled, visited, pt),
-                    _ => false
+                    _ => false,
                 }
             }
-            
+
             let mut visited = Vec::new();
             for expr in body {
-                if check_expr(expr, target_param, stdlib_enabled, &mut visited, &param_type_at) {
+                if check_expr(
+                    expr,
+                    target_param,
+                    stdlib_enabled,
+                    &mut visited,
+                    &param_type_at,
+                ) {
                     return true;
                 }
             }
             false
         };
-        
+
         if is_used_in_string_context(body, param, self.stdlib_enabled) {
             return Type::Ptr;
         }
 
         // Check if param is used in int context (passed to int-expecting functions)
-        fn check_int_context(expr: &Expr, param: &str, pt: &dyn Fn(&str, usize) -> Option<&'static str>) -> bool {
+        fn check_int_context(
+            expr: &Expr,
+            param: &str,
+            pt: &dyn Fn(&str, usize) -> Option<&'static str>,
+        ) -> bool {
             match expr {
                 Expr::Call { func, args } => {
                     for (i, arg) in args.iter().enumerate() {
                         if let Expr::Identifier(n, _) = arg {
                             if n == param
                                 && let Some(expected) = pt(func, i)
-                                    && expected == "i32" {
-                                        return true;
-                                    }
-                        } else if let Expr::Call { .. } = arg
-                            && check_int_context(arg, param, pt) {
+                                && expected == "i32"
+                            {
                                 return true;
                             }
+                        } else if let Expr::Call { .. } = arg
+                            && check_int_context(arg, param, pt)
+                        {
+                            return true;
+                        }
                     }
                     false
                 }
@@ -1634,25 +1892,34 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 _ => false,
             }
         }
-        if body.iter().any(|e| check_int_context(e, param, &param_type_at)) {
+        if body
+            .iter()
+            .any(|e| check_int_context(e, param, &param_type_at))
+        {
             return Type::I32;
         }
 
         // Check if param is used in float context (passed to float-expecting functions)
-        fn check_float_context(expr: &Expr, param: &str, pt: &dyn Fn(&str, usize) -> Option<&'static str>) -> bool {
+        fn check_float_context(
+            expr: &Expr,
+            param: &str,
+            pt: &dyn Fn(&str, usize) -> Option<&'static str>,
+        ) -> bool {
             match expr {
                 Expr::Call { func, args } => {
                     for (i, arg) in args.iter().enumerate() {
                         if let Expr::Identifier(n, _) = arg {
                             if n == param
                                 && let Some(expected) = pt(func, i)
-                                    && expected == "double" {
-                                        return true;
-                                    }
-                        } else if let Expr::Call { .. } = arg
-                            && check_float_context(arg, param, pt) {
+                                && expected == "double"
+                            {
                                 return true;
                             }
+                        } else if let Expr::Call { .. } = arg
+                            && check_float_context(arg, param, pt)
+                        {
+                            return true;
+                        }
                     }
                     false
                 }
@@ -1660,22 +1927,39 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 _ => false,
             }
         }
-        if body.iter().any(|e| check_float_context(e, param, &param_type_at)) {
+        if body
+            .iter()
+            .any(|e| check_float_context(e, param, &param_type_at))
+        {
             return Type::F64;
         }
-        
+
         // Fourth: check if param is used in binary expressions (comparison/arithmetic) anywhere
         fn param_in_binary(expr: &Expr, param: &str) -> bool {
             match expr {
                 Expr::Binary(l, _, r, _) => {
-                    if let Expr::Identifier(n, _) = l.as_ref() && n == param { return true; }
-                    if let Expr::Identifier(n, _) = r.as_ref() && n == param { return true; }
+                    if let Expr::Identifier(n, _) = l.as_ref()
+                        && n == param
+                    {
+                        return true;
+                    }
+                    if let Expr::Identifier(n, _) = r.as_ref()
+                        && n == param
+                    {
+                        return true;
+                    }
                     param_in_binary(l, param) || param_in_binary(r, param)
                 }
-                Expr::If { condition, then_branch, else_branch } => {
+                Expr::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
                     param_in_binary(condition, param)
                         || then_branch.stmts.iter().any(|e| param_in_binary(e, param))
-                        || else_branch.as_ref().is_some_and(|b| b.stmts.iter().any(|e| param_in_binary(e, param)))
+                        || else_branch
+                            .as_ref()
+                            .is_some_and(|b| b.stmts.iter().any(|e| param_in_binary(e, param)))
                 }
                 Expr::While { condition, body } => {
                     param_in_binary(condition, param)
@@ -1685,7 +1969,9 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                     param_in_binary(iterable, param)
                         || body.stmts.iter().any(|e| param_in_binary(e, param))
                 }
-                Expr::ForRange { start, end, body, .. } => {
+                Expr::ForRange {
+                    start, end, body, ..
+                } => {
                     param_in_binary(start, param)
                         || param_in_binary(end, param)
                         || body.stmts.iter().any(|e| param_in_binary(e, param))
@@ -1693,11 +1979,16 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 Expr::Call { args, .. } => args.iter().any(|a| param_in_binary(a, param)),
                 Expr::Return(inner, _) => param_in_binary(inner, param),
                 Expr::Unary(_, inner, _) => param_in_binary(inner, param),
-                Expr::Index { target, index } => param_in_binary(target, param) || param_in_binary(index, param),
-                Expr::AssignIndex { index, value, .. } => param_in_binary(index, param) || param_in_binary(value, param),
+                Expr::Index { target, index } => {
+                    param_in_binary(target, param) || param_in_binary(index, param)
+                }
+                Expr::AssignIndex { index, value, .. } => {
+                    param_in_binary(index, param) || param_in_binary(value, param)
+                }
                 Expr::List(items) => items.iter().any(|item| param_in_binary(item, param)),
                 Expr::Match { expr, arms } => {
-                    param_in_binary(expr, param) || arms.iter().any(|arm| param_in_binary(&arm.body, param))
+                    param_in_binary(expr, param)
+                        || arms.iter().any(|arm| param_in_binary(&arm.body, param))
                 }
                 _ => false,
             }
@@ -1705,7 +1996,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
         if body.iter().any(|e| param_in_binary(e, param)) {
             return Type::I32;
         }
-        
+
         // Default: params are string pointer (ptr) by default
         Type::Ptr
     }
@@ -1717,7 +2008,10 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
         locals: &mut HashMap<String, (Type, String, bool)>,
         return_ty: &str,
     ) -> CompileResult<bool> {
-        let last_is_return = stmts.iter().last().is_some_and(|s| matches!(s, Expr::Return(_, _)));
+        let last_is_return = stmts
+            .iter()
+            .last()
+            .is_some_and(|s| matches!(s, Expr::Return(_, _)));
         for stmt in stmts {
             self.generate_expr(stmt, params, locals, return_ty)?;
         }
@@ -1761,7 +2055,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                             return Err(CompileError::new(format!(
                                 "couldn't infer the type for variable {} (got {})",
                                 name, inferred
-                            )))
+                            )));
                         }
                     }
                 };
@@ -1811,18 +2105,22 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
             }
 
             Expr::Assign { name, value } => {
-                let (var_ty, alloca, is_const) = locals
-                    .get(name)
-                    .ok_or_else(|| {
-                        let suggestion = self
-                            .suggest_variable(name, params, locals)
-                            .map(|s| format!(" did you mean `{}`?", s))
-                            .unwrap_or_default();
-                        CompileError::new(format!("assign of unknown variable: {}{}", name, suggestion))
-                    })?;
+                let (var_ty, alloca, is_const) = locals.get(name).ok_or_else(|| {
+                    let suggestion = self
+                        .suggest_variable(name, params, locals)
+                        .map(|s| format!(" did you mean `{}`?", s))
+                        .unwrap_or_default();
+                    CompileError::new(format!(
+                        "assign of unknown variable: {}{}",
+                        name, suggestion
+                    ))
+                })?;
 
                 if *is_const {
-                    return Err(CompileError::new(format!("cannot assign to const-variable: {}", name)));
+                    return Err(CompileError::new(format!(
+                        "cannot assign to const-variable: {}",
+                        name
+                    )));
                 }
 
                 match var_ty {
@@ -1888,7 +2186,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                 self.emit_asm_call(args, params, locals)?;
             }
 
-Expr::Return(inner, _) => {
+            Expr::Return(inner, _) => {
                 let ty = self.infer_expr_type(inner, params, locals);
                 if ty == "i32" && return_ty == "i32" {
                     let val = self.generate_int_expr(inner, params, locals)?;
@@ -1946,13 +2244,23 @@ Expr::Return(inner, _) => {
                     .unwrap();
 
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
-                    let then_ended_with_return = self.generate_block_with_terminator(&then_branch.stmts, params, locals, return_ty)?;
+                    let then_ended_with_return = self.generate_block_with_terminator(
+                        &then_branch.stmts,
+                        params,
+                        locals,
+                        return_ty,
+                    )?;
                     if !then_ended_with_return {
                         writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
                     }
 
                     writeln!(&mut self.functions, "{}:", else_l).unwrap();
-                    let else_ended_with_return = self.generate_block_with_terminator(&else_block.stmts, params, locals, return_ty)?;
+                    let else_ended_with_return = self.generate_block_with_terminator(
+                        &else_block.stmts,
+                        params,
+                        locals,
+                        return_ty,
+                    )?;
                     if !else_ended_with_return {
                         writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
                     }
@@ -1965,7 +2273,12 @@ Expr::Return(inner, _) => {
                     .unwrap();
 
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
-                    let then_ended_with_return = self.generate_block_with_terminator(&then_branch.stmts, params, locals, return_ty)?;
+                    let then_ended_with_return = self.generate_block_with_terminator(
+                        &then_branch.stmts,
+                        params,
+                        locals,
+                        return_ty,
+                    )?;
                     if !then_ended_with_return {
                         writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
                     }
@@ -1979,7 +2292,8 @@ Expr::Return(inner, _) => {
                 let loop_body = self.next_block_label("while_body");
                 let loop_end = self.next_block_label("while_end");
 
-                self.loop_label_stack.push((loop_start.clone(), loop_end.clone()));
+                self.loop_label_stack
+                    .push((loop_start.clone(), loop_end.clone()));
 
                 writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_start).unwrap();
@@ -2010,7 +2324,11 @@ Expr::Return(inner, _) => {
                 self.loop_label_stack.pop();
             }
 
-            Expr::For { variable, iterable, body } => {
+            Expr::For {
+                variable,
+                iterable,
+                body,
+            } => {
                 let iter_val = self.generate_int_expr(iterable, params, locals)?;
                 let loop_start = self.next_block_label("for_start");
                 let loop_body = self.next_block_label("for_body");
@@ -2018,12 +2336,19 @@ Expr::Return(inner, _) => {
 
                 let counter_alloca = self.next_temp();
                 writeln!(&mut self.functions, "  %{} = alloca i32", counter_alloca).unwrap();
-                writeln!(&mut self.functions, "  store i32 {}, i32* %{}", iter_val.as_str(), counter_alloca).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}",
+                    iter_val.as_str(),
+                    counter_alloca
+                )
+                .unwrap();
 
                 let mut locals_for = locals.clone();
                 locals_for.insert(variable.clone(), (Type::I32, counter_alloca.clone(), false));
 
-                self.loop_label_stack.push((loop_start.clone(), loop_end.clone()));
+                self.loop_label_stack
+                    .push((loop_start.clone(), loop_end.clone()));
 
                 writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_start).unwrap();
@@ -2080,7 +2405,12 @@ Expr::Return(inner, _) => {
                 self.loop_label_stack.pop();
             }
 
-            Expr::ForRange { variable, start, end, body } => {
+            Expr::ForRange {
+                variable,
+                start,
+                end,
+                body,
+            } => {
                 let start_val = self.generate_int_expr(start, params, locals)?;
                 let end_val = self.generate_int_expr(end, params, locals)?;
                 let loop_start_label = self.next_block_label("for_start");
@@ -2089,12 +2419,19 @@ Expr::Return(inner, _) => {
 
                 let counter_alloca = self.next_temp();
                 writeln!(&mut self.functions, "  %{} = alloca i32", counter_alloca).unwrap();
-                writeln!(&mut self.functions, "  store i32 {}, i32* %{}", start_val.as_str(), counter_alloca).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}",
+                    start_val.as_str(),
+                    counter_alloca
+                )
+                .unwrap();
 
                 let mut locals_for = locals.clone();
                 locals_for.insert(variable.clone(), (Type::I32, counter_alloca.clone(), false));
 
-                self.loop_label_stack.push((loop_start_label.clone(), loop_end.clone()));
+                self.loop_label_stack
+                    .push((loop_start_label.clone(), loop_end.clone()));
 
                 writeln!(&mut self.functions, "  br label %{}", loop_start_label).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_start_label).unwrap();
@@ -2104,19 +2441,24 @@ Expr::Return(inner, _) => {
                     &mut self.functions,
                     "  %{} = load i32, i32* %{}",
                     counter_val, counter_alloca
-                ).unwrap();
+                )
+                .unwrap();
 
                 let loop_cond = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = icmp slt i32 %{}, {}",
-                    loop_cond, counter_val, end_val.as_str()
-                ).unwrap();
+                    loop_cond,
+                    counter_val,
+                    end_val.as_str()
+                )
+                .unwrap();
                 writeln!(
                     &mut self.functions,
                     "  br i1 %{}, label %{}, label %{}",
                     loop_cond, loop_body, loop_end
-                ).unwrap();
+                )
+                .unwrap();
 
                 writeln!(&mut self.functions, "{}:", loop_body).unwrap();
                 for stmt in &body.stmts {
@@ -2128,12 +2470,14 @@ Expr::Return(inner, _) => {
                     &mut self.functions,
                     "  %{} = add i32 %{}, 1",
                     new_counter, counter_val
-                ).unwrap();
+                )
+                .unwrap();
                 writeln!(
                     &mut self.functions,
                     "  store i32 %{}, i32* %{}",
                     new_counter, counter_alloca
-                ).unwrap();
+                )
+                .unwrap();
 
                 writeln!(&mut self.functions, "  br label %{}", loop_start_label).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_end).unwrap();
@@ -2210,27 +2554,47 @@ Expr::Return(inner, _) => {
                 self.emit_printf_str(&ptr);
             }
 
-            Expr::Index { target: _target, index: _index } => {
+            Expr::Index {
+                target: _target,
+                index: _index,
+            } => {
                 let val = self.generate_int_expr(expr, params, locals)?;
                 self.emit_printf_int(&val.as_str());
             }
 
             Expr::Match { expr, arms } => {
-                let has_variant = arms.iter().any(|a| matches!(a.pattern, crate::ast::MatchPattern::Variant { .. }));
+                let has_variant = arms
+                    .iter()
+                    .any(|a| matches!(a.pattern, crate::ast::MatchPattern::Variant { .. }));
                 if has_variant {
                     // Enum match: compare discriminant
                     let enum_ptr = self.next_temp();
                     self.generate_ptr_expr(expr, params, locals, &enum_ptr)?;
                     let disc_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", disc_ptr, enum_ptr).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %{} to i32*",
+                        disc_ptr, enum_ptr
+                    )
+                    .unwrap();
                     let disc_val = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = load i32, i32* %{}", disc_val, disc_ptr).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load i32, i32* %{}",
+                        disc_val, disc_ptr
+                    )
+                    .unwrap();
                     let end_label = self.next_block_label("ematch_end");
-                    let wildcard_label = arms.iter().position(|a| matches!(a.pattern, crate::ast::MatchPattern::Wildcard))
+                    let wildcard_label = arms
+                        .iter()
+                        .position(|a| matches!(a.pattern, crate::ast::MatchPattern::Wildcard))
                         .map(|_| self.next_block_label("ematch_default"));
                     for (i, arm) in arms.iter().enumerate() {
                         match &arm.pattern {
-                            crate::ast::MatchPattern::Variant { name: vname, bindings } => {
+                            crate::ast::MatchPattern::Variant {
+                                name: vname,
+                                bindings,
+                            } => {
                                 // Find variant index in the enum definition
                                 let mut disc_val_to_check: i32 = -1;
                                 for edef in &self.enum_defs {
@@ -2241,27 +2605,48 @@ Expr::Return(inner, _) => {
                                     }
                                 }
                                 let next_label = if i + 1 < arms.len()
-                                    && !matches!(arms[i + 1].pattern, crate::ast::MatchPattern::Wildcard)
-                                {
+                                    && !matches!(
+                                        arms[i + 1].pattern,
+                                        crate::ast::MatchPattern::Wildcard
+                                    ) {
                                     self.next_block_label("ematch_next")
                                 } else {
                                     wildcard_label.clone().unwrap_or_else(|| end_label.clone())
                                 };
                                 let cmp = self.next_temp();
-                                writeln!(&mut self.functions, "  %{} = icmp eq i32 %{}, {}", cmp, disc_val, disc_val_to_check).unwrap();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = icmp eq i32 %{}, {}",
+                                    cmp, disc_val, disc_val_to_check
+                                )
+                                .unwrap();
                                 let arm_label = self.next_block_label("earm");
-                                writeln!(&mut self.functions, "  br i1 %{}, label %{}, label %{}", cmp, arm_label, next_label).unwrap();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  br i1 %{}, label %{}, label %{}",
+                                    cmp, arm_label, next_label
+                                )
+                                .unwrap();
                                 writeln!(&mut self.functions, "{}:", arm_label).unwrap();
                                 // Extract bindings from payload
                                 let variant_fields: Vec<(String, String)> = {
-                                    let edef = self.enum_defs.iter().find(|e| e.variants.iter().any(|v| v.name == *vname));
+                                    let edef = self
+                                        .enum_defs
+                                        .iter()
+                                        .find(|e| e.variants.iter().any(|v| v.name == *vname));
                                     match edef {
-                                        Some(e) => e.variants.iter()
+                                        Some(e) => e
+                                            .variants
+                                            .iter()
                                             .find(|v| v.name == *vname)
                                             .map(|v| {
-                                                v.fields.iter().enumerate()
+                                                v.fields
+                                                    .iter()
+                                                    .enumerate()
                                                     .filter(|(i, _)| bindings.len() > *i)
-                                                    .map(|(i, ft)| (bindings[i].clone(), ft.clone()))
+                                                    .map(|(i, ft)| {
+                                                        (bindings[i].clone(), ft.clone())
+                                                    })
                                                     .collect()
                                             })
                                             .unwrap_or_default(),
@@ -2272,36 +2657,110 @@ Expr::Return(inner, _) => {
                                 for (binding_name, field_typ) in &variant_fields {
                                     let alloca = self.next_temp();
                                     let elem_ptr = self.next_temp();
-                                    writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, enum_ptr, payload_off).unwrap();
+                                    writeln!(
+                                        &mut self.functions,
+                                        "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                                        elem_ptr, enum_ptr, payload_off
+                                    )
+                                    .unwrap();
                                     match field_typ.as_str() {
                                         "i32" | "bool" => {
-                                            writeln!(&mut self.functions, "  %{} = alloca i32", alloca).unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = alloca i32",
+                                                alloca
+                                            )
+                                            .unwrap();
                                             let typed_ptr = self.next_temp();
-                                            writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", typed_ptr, elem_ptr).unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = bitcast i8* %{} to i32*",
+                                                typed_ptr, elem_ptr
+                                            )
+                                            .unwrap();
                                             let loaded = self.next_temp();
-                                            writeln!(&mut self.functions, "  %{} = load i32, i32* %{}", loaded, typed_ptr).unwrap();
-                                            writeln!(&mut self.functions, "  store i32 %{}, i32* %{}", loaded, alloca).unwrap();
-                                            locals.insert(binding_name.clone(), (crate::compiler::Type::I32, alloca.clone(), false));
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = load i32, i32* %{}",
+                                                loaded, typed_ptr
+                                            )
+                                            .unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  store i32 %{}, i32* %{}",
+                                                loaded, alloca
+                                            )
+                                            .unwrap();
+                                            locals.insert(
+                                                binding_name.clone(),
+                                                (crate::compiler::Type::I32, alloca.clone(), false),
+                                            );
                                             payload_off += 4;
                                         }
                                         "f64" | "float" | "double" => {
-                                            writeln!(&mut self.functions, "  %{} = alloca double", alloca).unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = alloca double",
+                                                alloca
+                                            )
+                                            .unwrap();
                                             let typed_ptr = self.next_temp();
-                                            writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = bitcast i8* %{} to double*",
+                                                typed_ptr, elem_ptr
+                                            )
+                                            .unwrap();
                                             let loaded = self.next_temp();
-                                            writeln!(&mut self.functions, "  %{} = load double, double* %{}", loaded, typed_ptr).unwrap();
-                                            writeln!(&mut self.functions, "  store double %{}, double* %{}", loaded, alloca).unwrap();
-                                            locals.insert(binding_name.clone(), (crate::compiler::Type::F64, alloca.clone(), false));
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = load double, double* %{}",
+                                                loaded, typed_ptr
+                                            )
+                                            .unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  store double %{}, double* %{}",
+                                                loaded, alloca
+                                            )
+                                            .unwrap();
+                                            locals.insert(
+                                                binding_name.clone(),
+                                                (crate::compiler::Type::F64, alloca.clone(), false),
+                                            );
                                             payload_off += 8;
                                         }
                                         _ => {
-                                            writeln!(&mut self.functions, "  %{} = alloca i8*", alloca).unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = alloca i8*",
+                                                alloca
+                                            )
+                                            .unwrap();
                                             let typed_ptr = self.next_temp();
-                                            writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", typed_ptr, elem_ptr).unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = bitcast i8* %{} to i8**",
+                                                typed_ptr, elem_ptr
+                                            )
+                                            .unwrap();
                                             let loaded = self.next_temp();
-                                            writeln!(&mut self.functions, "  %{} = load i8*, i8** %{}", loaded, typed_ptr).unwrap();
-                                            writeln!(&mut self.functions, "  store i8* %{}, i8** %{}", loaded, alloca).unwrap();
-                                            locals.insert(binding_name.clone(), (crate::compiler::Type::Ptr, alloca.clone(), false));
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  %{} = load i8*, i8** %{}",
+                                                loaded, typed_ptr
+                                            )
+                                            .unwrap();
+                                            writeln!(
+                                                &mut self.functions,
+                                                "  store i8* %{}, i8** %{}",
+                                                loaded, alloca
+                                            )
+                                            .unwrap();
+                                            locals.insert(
+                                                binding_name.clone(),
+                                                (crate::compiler::Type::Ptr, alloca.clone(), false),
+                                            );
                                             payload_off += 8;
                                         }
                                     }
@@ -2312,7 +2771,9 @@ Expr::Return(inner, _) => {
                                     locals.remove(binding);
                                 }
                                 writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
-                                if next_label != end_label && wildcard_label.as_ref() != Some(&next_label) {
+                                if next_label != end_label
+                                    && wildcard_label.as_ref() != Some(&next_label)
+                                {
                                     writeln!(&mut self.functions, "{}:", next_label).unwrap();
                                 }
                             }
@@ -2333,17 +2794,23 @@ Expr::Return(inner, _) => {
                     writeln!(
                         &mut self.functions,
                         "  %{} = add i32 {}, 0",
-                        match_reg, match_val.as_str()
-                    ).unwrap();
+                        match_reg,
+                        match_val.as_str()
+                    )
+                    .unwrap();
                     let end_label = self.next_block_label("match_end");
-                    let wildcard_label = arms.iter().position(|a| matches!(a.pattern, crate::ast::MatchPattern::Wildcard))
+                    let wildcard_label = arms
+                        .iter()
+                        .position(|a| matches!(a.pattern, crate::ast::MatchPattern::Wildcard))
                         .map(|_| self.next_block_label("match_default"));
                     for (i, arm) in arms.iter().enumerate() {
                         match &arm.pattern {
                             crate::ast::MatchPattern::Int(n) => {
                                 let next_label = if i + 1 < arms.len()
-                                    && !matches!(arms[i + 1].pattern, crate::ast::MatchPattern::Wildcard)
-                                {
+                                    && !matches!(
+                                        arms[i + 1].pattern,
+                                        crate::ast::MatchPattern::Wildcard
+                                    ) {
                                     self.next_block_label("match_next")
                                 } else {
                                     wildcard_label.clone().unwrap_or_else(|| end_label.clone())
@@ -2353,17 +2820,21 @@ Expr::Return(inner, _) => {
                                     &mut self.functions,
                                     "  %{} = icmp eq i32 %{}, {}",
                                     cmp, match_reg, n
-                                ).unwrap();
+                                )
+                                .unwrap();
                                 let arm_label = self.next_block_label("match_arm");
                                 writeln!(
                                     &mut self.functions,
                                     "  br i1 %{}, label %{}, label %{}",
                                     cmp, arm_label, next_label
-                                ).unwrap();
+                                )
+                                .unwrap();
                                 writeln!(&mut self.functions, "{}:", arm_label).unwrap();
                                 self.generate_expr(&arm.body, params, locals, return_ty)?;
                                 writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
-                                if next_label != end_label && wildcard_label.as_ref() != Some(&next_label) {
+                                if next_label != end_label
+                                    && wildcard_label.as_ref() != Some(&next_label)
+                                {
                                     writeln!(&mut self.functions, "{}:", next_label).unwrap();
                                 }
                             }
@@ -2387,86 +2858,140 @@ Expr::Return(inner, _) => {
                     None => return Err(CompileError::new(format!("unknown variable: {}", name))),
                 };
                 let ptr = self.next_temp();
-                self.generate_ptr_expr(&Expr::Identifier(name.clone(), SourceSpan::unknown()), params, locals, &ptr)?;
+                self.generate_ptr_expr(
+                    &Expr::Identifier(name.clone(), SourceSpan::unknown()),
+                    params,
+                    locals,
+                    &ptr,
+                )?;
                 let idx = self.generate_int_expr(index, params, locals)?;
                 let elem_off = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = mul i32 {}, 4",
-                    elem_off, idx.as_str()
-                ).unwrap();
+                    elem_off,
+                    idx.as_str()
+                )
+                .unwrap();
                 let offset = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = add i32 %{}, 8",
                     offset, elem_off
-                ).unwrap();
+                )
+                .unwrap();
                 let elem_ptr = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = getelementptr i8, i8* %{}, i32 %{}",
                     elem_ptr, ptr, offset
-                ).unwrap();
+                )
+                .unwrap();
                 let i32_ptr = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = bitcast i8* %{} to i32*",
                     i32_ptr, elem_ptr
-                ).unwrap();
+                )
+                .unwrap();
                 let val = self.generate_int_expr(value, params, locals)?;
                 writeln!(
                     &mut self.functions,
                     "  store i32 {}, i32* %{}",
-                    val.as_str(), i32_ptr
-                ).unwrap();
+                    val.as_str(),
+                    i32_ptr
+                )
+                .unwrap();
             }
 
-            Expr::FieldAssign { target, field, value } => {
+            Expr::FieldAssign {
+                target,
+                field,
+                value,
+            } => {
                 let struct_defs = self.struct_defs.clone();
                 let ptr = self.next_temp();
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
-                } else { None };
+                } else {
+                    None
+                };
                 let mut offset = 0i32;
                 let mut field_typ = "i32".to_string();
                 if let Some(ref name) = target_name
-                    && let Some(sdef) = struct_defs.iter().find(|_s| {
-                        locals.contains_key(name)
-                    }) {
-                        for sf in &sdef.fields {
-                            if sf.name == *field {
-                                field_typ = sf.typ.clone();
-                                break;
-                            }
-                            offset += match sf.typ.as_str() {
-                                "i32" | "bool" => 4,
-                                "f64" | "float" | "double" => 8,
-                                _ => 8,
-                            };
+                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name))
+                {
+                    for sf in &sdef.fields {
+                        if sf.name == *field {
+                            field_typ = sf.typ.clone();
+                            break;
                         }
+                        offset += match sf.typ.as_str() {
+                            "i32" | "bool" => 4,
+                            "f64" | "float" | "double" => 8,
+                            _ => 8,
+                        };
                     }
+                }
                 let elem_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                    elem_ptr, ptr, offset
+                )
+                .unwrap();
                 match field_typ.as_str() {
                     "i32" | "bool" => {
                         let typed_ptr = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", typed_ptr, elem_ptr).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %{} to i32*",
+                            typed_ptr, elem_ptr
+                        )
+                        .unwrap();
                         let val = self.generate_int_expr(value, params, locals)?;
-                        writeln!(&mut self.functions, "  store i32 {}, i32* %{}", val.as_str(), typed_ptr).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  store i32 {}, i32* %{}",
+                            val.as_str(),
+                            typed_ptr
+                        )
+                        .unwrap();
                     }
                     "f64" | "float" | "double" => {
                         let typed_ptr = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %{} to double*",
+                            typed_ptr, elem_ptr
+                        )
+                        .unwrap();
                         let val = self.generate_float_expr(value, params, locals)?;
-                        writeln!(&mut self.functions, "  store double {}, double* %{}", val.as_str(), typed_ptr).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  store double {}, double* %{}",
+                            val.as_str(),
+                            typed_ptr
+                        )
+                        .unwrap();
                     }
                     _ => {
                         let typed_ptr = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", typed_ptr, elem_ptr).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %{} to i8**",
+                            typed_ptr, elem_ptr
+                        )
+                        .unwrap();
                         let val_ptr = self.next_temp();
                         self.generate_ptr_expr(value, params, locals, &val_ptr)?;
-                        writeln!(&mut self.functions, "  store i8* %{}, i8** %{}", val_ptr, typed_ptr).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  store i8* %{}, i8** %{}",
+                            val_ptr, typed_ptr
+                        )
+                        .unwrap();
                     }
                 }
             }
@@ -2482,8 +3007,7 @@ Expr::Return(inner, _) => {
         writeln!(
             &mut self.functions,
             "  call i32 (i8*, ...) @printf(i8* %{}, i32 {})",
-            fmt,
-            value
+            fmt, value
         )
         .unwrap();
     }
@@ -2493,8 +3017,7 @@ Expr::Return(inner, _) => {
         writeln!(
             &mut self.functions,
             "  call i32 (i8*, ...) @printf(i8* %{}, double {})",
-            fmt,
-            value
+            fmt, value
         )
         .unwrap();
     }
@@ -2520,7 +3043,7 @@ Expr::Return(inner, _) => {
                                 let loaded = self.next_temp();
                                 writeln!(
                                     &mut self.functions,
-                    "  %{} = load i32, i32* %{}",
+                                    "  %{} = load i32, i32* %{}",
                                     loaded, alloca
                                 )
                                 .unwrap();
@@ -2591,7 +3114,12 @@ Expr::Return(inner, _) => {
             sprintf_args
         )
         .unwrap();
-        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result_ptr, buf_ptr).unwrap();
+        writeln!(
+            &mut self.functions,
+            "  %{} = bitcast i8* %{} to i8*",
+            result_ptr, buf_ptr
+        )
+        .unwrap();
         Ok(())
     }
 
@@ -2608,7 +3136,11 @@ Expr::Return(inner, _) => {
             Expr::Call { func, args } => {
                 let ret_ty = self
                     .builtin_return_type(func)
-                    .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
+                    .or_else(|| {
+                        self.function_sigs
+                            .get(&self.resolve_function_name(func))
+                            .copied()
+                    })
                     .unwrap_or("void");
                 if ret_ty != "i32" {
                     return Err(CompileError::new(format!("{} does not return i32", func)));
@@ -2687,19 +3219,25 @@ Expr::Return(inner, _) => {
                 match op {
                     UnaryOp::Pos => match v {
                         Val::Imm(n) => Ok(Val::Imm(n)),
-                        Val::ImmFloat(_) => Err(CompileError::new("cannot use + on float in integer context")),
+                        Val::ImmFloat(_) => Err(CompileError::new(
+                            "cannot use + on float in integer context",
+                        )),
                         Val::Reg(r) => {
                             let res = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = add i32 0, %{}", res, r).unwrap();
+                            writeln!(&mut self.functions, "  %{} = add i32 0, %{}", res, r)
+                                .unwrap();
                             Ok(Val::Reg(res))
                         }
                     },
                     UnaryOp::Neg => match v {
                         Val::Imm(n) => Ok(Val::Imm(-n)),
-                        Val::ImmFloat(_) => Err(CompileError::new("cannot use - on float in integer context")),
+                        Val::ImmFloat(_) => Err(CompileError::new(
+                            "cannot use - on float in integer context",
+                        )),
                         Val::Reg(r) => {
                             let res = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = sub i32 0, %{}", res, r).unwrap();
+                            writeln!(&mut self.functions, "  %{} = sub i32 0, %{}", res, r)
+                                .unwrap();
                             Ok(Val::Reg(res))
                         }
                     },
@@ -2708,20 +3246,11 @@ Expr::Return(inner, _) => {
                         Val::ImmFloat(f) => Ok(Val::Imm(if f == 0.0 { 1 } else { 0 })),
                         Val::Reg(r) => {
                             let cmp = self.next_temp();
-                            writeln!(
-                                &mut self.functions,
-                                "  %{} = icmp eq i32 %{}, 0",
-                                cmp,
-                                r
-                            )
-                            .unwrap();
+                            writeln!(&mut self.functions, "  %{} = icmp eq i32 %{}, 0", cmp, r)
+                                .unwrap();
                             let zext = self.next_temp();
-                            writeln!(
-                                &mut self.functions,
-                                "  %{} = zext i1 %{} to i32",
-                                zext, cmp
-                            )
-                            .unwrap();
+                            writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                                .unwrap();
                             Ok(Val::Reg(zext))
                         }
                     },
@@ -2733,85 +3262,229 @@ Expr::Return(inner, _) => {
                 let res = self.next_temp();
 
                 match op {
-                    BinOp::Add => writeln!(&mut self.functions, "  %{} = add i32 {}, {}", res, lv.as_str(), rv.as_str()),
-                    BinOp::Sub => writeln!(&mut self.functions, "  %{} = sub i32 {}, {}", res, lv.as_str(), rv.as_str()),
-                    BinOp::Mul => writeln!(&mut self.functions, "  %{} = mul i32 {}, {}", res, lv.as_str(), rv.as_str()),
-                    BinOp::Div => writeln!(&mut self.functions, "  %{} = sdiv i32 {}, {}", res, lv.as_str(), rv.as_str()),
-                    BinOp::DivMod => writeln!(&mut self.functions, "  %{} = srem i32 {}, {}", res, lv.as_str(), rv.as_str()),
+                    BinOp::Add => writeln!(
+                        &mut self.functions,
+                        "  %{} = add i32 {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
+                    BinOp::Sub => writeln!(
+                        &mut self.functions,
+                        "  %{} = sub i32 {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
+                    BinOp::Mul => writeln!(
+                        &mut self.functions,
+                        "  %{} = mul i32 {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
+                    BinOp::Div => writeln!(
+                        &mut self.functions,
+                        "  %{} = sdiv i32 {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
+                    BinOp::DivMod => writeln!(
+                        &mut self.functions,
+                        "  %{} = srem i32 {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
                     BinOp::Pow => {
                         let ld = self.next_temp();
                         let rd = self.next_temp();
                         let pow = self.next_temp();
                         let int_res = self.next_temp();
 
-                        writeln!(&mut self.functions, "  %{} = sitofp i32 {} to double", ld, lv.as_str()).unwrap();
-                        writeln!(&mut self.functions, "  %{} = sitofp i32 {} to double", rd, rv.as_str()).unwrap();
-                        writeln!(&mut self.functions, "  %{} = call double @llvm.pow.f64(double %{}, double %{})", pow, ld, rd).unwrap();
-                        writeln!(&mut self.functions, "  %{} = fptosi double %{} to i32", int_res, pow).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = sitofp i32 {} to double",
+                            ld,
+                            lv.as_str()
+                        )
+                        .unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = sitofp i32 {} to double",
+                            rd,
+                            rv.as_str()
+                        )
+                        .unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = call double @llvm.pow.f64(double %{}, double %{})",
+                            pow, ld, rd
+                        )
+                        .unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fptosi double %{} to i32",
+                            int_res, pow
+                        )
+                        .unwrap();
                         return Ok(Val::Reg(int_res));
                     }
                     BinOp::Eq => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp eq i32 {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp eq i32 {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Ne => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp ne i32 {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp ne i32 {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Lt => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp slt i32 {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp slt i32 {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Le => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp sle i32 {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp sle i32 {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Gt => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp sgt i32 {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp sgt i32 {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Ge => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp sge i32 {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp sge i32 {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::And => {
                         let lv_bool = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp ne i32 {}, 0", lv_bool, lv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp ne i32 {}, 0",
+                            lv_bool,
+                            lv.as_str()
+                        )
+                        .unwrap();
                         let rv_bool = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp ne i32 {}, 0", rv_bool, rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp ne i32 {}, 0",
+                            rv_bool,
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let and_res = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = and i1 %{}, %{}", and_res, lv_bool, rv_bool).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = and i1 %{}, %{}",
+                            and_res, lv_bool, rv_bool
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, and_res).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = zext i1 %{} to i32",
+                            zext, and_res
+                        )
+                        .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Or => {
                         let lv_bool = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp ne i32 {}, 0", lv_bool, lv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp ne i32 {}, 0",
+                            lv_bool,
+                            lv.as_str()
+                        )
+                        .unwrap();
                         let rv_bool = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = icmp ne i32 {}, 0", rv_bool, rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = icmp ne i32 {}, 0",
+                            rv_bool,
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let or_res = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = or i1 %{}, %{}", or_res, lv_bool, rv_bool).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = or i1 %{}, %{}",
+                            or_res, lv_bool, rv_bool
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, or_res).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = zext i1 %{} to i32",
+                            zext, or_res
+                        )
+                        .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                 }
@@ -2824,19 +3497,25 @@ Expr::Return(inner, _) => {
                 writeln!(
                     &mut self.functions,
                     "  %{} = add i32 {}, 0",
-                    match_reg, match_val.as_str()
-                ).unwrap();
+                    match_reg,
+                    match_val.as_str()
+                )
+                .unwrap();
                 let result_alloca = self.next_temp();
                 writeln!(&mut self.functions, "  %{} = alloca i32", result_alloca).unwrap();
                 let end_label = self.next_block_label("match_end");
-                let wildcard_label = arms.iter().position(|a| matches!(a.pattern, crate::ast::MatchPattern::Wildcard))
+                let wildcard_label = arms
+                    .iter()
+                    .position(|a| matches!(a.pattern, crate::ast::MatchPattern::Wildcard))
                     .map(|_| self.next_block_label("match_default"));
                 for (i, arm) in arms.iter().enumerate() {
                     match &arm.pattern {
                         crate::ast::MatchPattern::Int(n) => {
                             let next_label = if i + 1 < arms.len()
-                                && !matches!(arms[i + 1].pattern, crate::ast::MatchPattern::Wildcard)
-                            {
+                                && !matches!(
+                                    arms[i + 1].pattern,
+                                    crate::ast::MatchPattern::Wildcard
+                                ) {
                                 self.next_block_label("match_next")
                             } else {
                                 wildcard_label.clone().unwrap_or_else(|| end_label.clone())
@@ -2846,29 +3525,40 @@ Expr::Return(inner, _) => {
                                 &mut self.functions,
                                 "  %{} = icmp eq i32 %{}, {}",
                                 cmp, match_reg, n
-                            ).unwrap();
+                            )
+                            .unwrap();
                             let arm_label = self.next_block_label("match_arm");
                             writeln!(
                                 &mut self.functions,
                                 "  br i1 %{}, label %{}, label %{}",
                                 cmp, arm_label, next_label
-                            ).unwrap();
+                            )
+                            .unwrap();
                             writeln!(&mut self.functions, "{}:", arm_label).unwrap();
                             let val = self.generate_int_expr(&arm.body, params, locals)?;
                             writeln!(
                                 &mut self.functions,
                                 "  store i32 {}, i32* %{}",
-                                val.as_str(), result_alloca
-                            ).unwrap();
+                                val.as_str(),
+                                result_alloca
+                            )
+                            .unwrap();
                             writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
-                            if next_label != end_label && wildcard_label.as_ref() != Some(&next_label) {
+                            if next_label != end_label
+                                && wildcard_label.as_ref() != Some(&next_label)
+                            {
                                 writeln!(&mut self.functions, "{}:", next_label).unwrap();
                             }
                         }
-                        crate::ast::MatchPattern::Variant { name: vname, bindings } => {
+                        crate::ast::MatchPattern::Variant {
+                            name: vname,
+                            bindings,
+                        } => {
                             let next_label = if i + 1 < arms.len()
-                                && !matches!(arms[i + 1].pattern, crate::ast::MatchPattern::Wildcard)
-                            {
+                                && !matches!(
+                                    arms[i + 1].pattern,
+                                    crate::ast::MatchPattern::Wildcard
+                                ) {
                                 self.next_block_label("ematch_next")
                             } else {
                                 wildcard_label.clone().unwrap_or_else(|| end_label.clone())
@@ -2886,22 +3576,49 @@ Expr::Return(inner, _) => {
                             let enum_ptr = self.next_temp();
                             self.generate_ptr_expr(expr, params, locals, &enum_ptr)?;
                             let disc_ptr = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", disc_ptr, enum_ptr).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = bitcast i8* %{} to i32*",
+                                disc_ptr, enum_ptr
+                            )
+                            .unwrap();
                             let edisc = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = load i32, i32* %{}", edisc, disc_ptr).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = load i32, i32* %{}",
+                                edisc, disc_ptr
+                            )
+                            .unwrap();
                             let cmp = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = icmp eq i32 %{}, {}", cmp, edisc, disc_val_to_check).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = icmp eq i32 %{}, {}",
+                                cmp, edisc, disc_val_to_check
+                            )
+                            .unwrap();
                             let arm_label = self.next_block_label("earm_int");
-                            writeln!(&mut self.functions, "  br i1 %{}, label %{}, label %{}", cmp, arm_label, next_label).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  br i1 %{}, label %{}, label %{}",
+                                cmp, arm_label, next_label
+                            )
+                            .unwrap();
                             writeln!(&mut self.functions, "{}:", arm_label).unwrap();
                             // Extract bindings - use cloned locals since we can't modify originals
                             let variant_fields: Vec<(String, String)> = {
-                                let edef = self.enum_defs.iter().find(|e| e.variants.iter().any(|v| v.name == *vname));
+                                let edef = self
+                                    .enum_defs
+                                    .iter()
+                                    .find(|e| e.variants.iter().any(|v| v.name == *vname));
                                 match edef {
-                                    Some(e) => e.variants.iter()
+                                    Some(e) => e
+                                        .variants
+                                        .iter()
                                         .find(|v| v.name == *vname)
                                         .map(|v| {
-                                            v.fields.iter().enumerate()
+                                            v.fields
+                                                .iter()
+                                                .enumerate()
                                                 .filter(|(i, _)| bindings.len() > *i)
                                                 .map(|(i, ft)| (bindings[i].clone(), ft.clone()))
                                                 .collect()
@@ -2915,44 +3632,118 @@ Expr::Return(inner, _) => {
                             for (binding_name, field_typ) in &variant_fields {
                                 let alloca = self.next_temp();
                                 let elem_ptr = self.next_temp();
-                                writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, enum_ptr, payload_off).unwrap();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                                    elem_ptr, enum_ptr, payload_off
+                                )
+                                .unwrap();
                                 match field_typ.as_str() {
                                     "i32" | "bool" => {
-                                        writeln!(&mut self.functions, "  %{} = alloca i32", alloca).unwrap();
+                                        writeln!(&mut self.functions, "  %{} = alloca i32", alloca)
+                                            .unwrap();
                                         let typed_ptr = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", typed_ptr, elem_ptr).unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = bitcast i8* %{} to i32*",
+                                            typed_ptr, elem_ptr
+                                        )
+                                        .unwrap();
                                         let loaded = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = load i32, i32* %{}", loaded, typed_ptr).unwrap();
-                                        writeln!(&mut self.functions, "  store i32 %{}, i32* %{}", loaded, alloca).unwrap();
-                                        arm_locals.insert(binding_name.clone(), (crate::compiler::Type::I32, alloca.clone(), false));
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = load i32, i32* %{}",
+                                            loaded, typed_ptr
+                                        )
+                                        .unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  store i32 %{}, i32* %{}",
+                                            loaded, alloca
+                                        )
+                                        .unwrap();
+                                        arm_locals.insert(
+                                            binding_name.clone(),
+                                            (crate::compiler::Type::I32, alloca.clone(), false),
+                                        );
                                         payload_off += 4;
                                     }
                                     "f64" | "float" | "double" => {
-                                        writeln!(&mut self.functions, "  %{} = alloca double", alloca).unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = alloca double",
+                                            alloca
+                                        )
+                                        .unwrap();
                                         let typed_ptr = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = bitcast i8* %{} to double*",
+                                            typed_ptr, elem_ptr
+                                        )
+                                        .unwrap();
                                         let loaded = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = load double, double* %{}", loaded, typed_ptr).unwrap();
-                                        writeln!(&mut self.functions, "  store double %{}, double* %{}", loaded, alloca).unwrap();
-                                        arm_locals.insert(binding_name.clone(), (crate::compiler::Type::F64, alloca.clone(), false));
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = load double, double* %{}",
+                                            loaded, typed_ptr
+                                        )
+                                        .unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  store double %{}, double* %{}",
+                                            loaded, alloca
+                                        )
+                                        .unwrap();
+                                        arm_locals.insert(
+                                            binding_name.clone(),
+                                            (crate::compiler::Type::F64, alloca.clone(), false),
+                                        );
                                         payload_off += 8;
                                     }
                                     _ => {
-                                        writeln!(&mut self.functions, "  %{} = alloca i8*", alloca).unwrap();
+                                        writeln!(&mut self.functions, "  %{} = alloca i8*", alloca)
+                                            .unwrap();
                                         let typed_ptr = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", typed_ptr, elem_ptr).unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = bitcast i8* %{} to i8**",
+                                            typed_ptr, elem_ptr
+                                        )
+                                        .unwrap();
                                         let loaded = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = load i8*, i8** %{}", loaded, typed_ptr).unwrap();
-                                        writeln!(&mut self.functions, "  store i8* %{}, i8** %{}", loaded, alloca).unwrap();
-                                        arm_locals.insert(binding_name.clone(), (crate::compiler::Type::Ptr, alloca.clone(), false));
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = load i8*, i8** %{}",
+                                            loaded, typed_ptr
+                                        )
+                                        .unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  store i8* %{}, i8** %{}",
+                                            loaded, alloca
+                                        )
+                                        .unwrap();
+                                        arm_locals.insert(
+                                            binding_name.clone(),
+                                            (crate::compiler::Type::Ptr, alloca.clone(), false),
+                                        );
                                         payload_off += 8;
                                     }
                                 }
                             }
                             let val = self.generate_int_expr(&arm.body, params, &arm_locals)?;
-                            writeln!(&mut self.functions, "  store i32 {}, i32* %{}", val.as_str(), result_alloca).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  store i32 {}, i32* %{}",
+                                val.as_str(),
+                                result_alloca
+                            )
+                            .unwrap();
                             writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
-                            if next_label != end_label && wildcard_label.as_ref() != Some(&next_label) {
+                            if next_label != end_label
+                                && wildcard_label.as_ref() != Some(&next_label)
+                            {
                                 writeln!(&mut self.functions, "{}:", next_label).unwrap();
                             }
                         }
@@ -2964,8 +3755,10 @@ Expr::Return(inner, _) => {
                             writeln!(
                                 &mut self.functions,
                                 "  store i32 {}, i32* %{}",
-                                val.as_str(), result_alloca
-                            ).unwrap();
+                                val.as_str(),
+                                result_alloca
+                            )
+                            .unwrap();
                             writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
                         }
                     }
@@ -2976,7 +3769,8 @@ Expr::Return(inner, _) => {
                         &mut self.functions,
                         "  store i32 0, i32* %{}",
                         result_alloca
-                    ).unwrap();
+                    )
+                    .unwrap();
                     writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
                 }
                 writeln!(&mut self.functions, "{}:", end_label).unwrap();
@@ -2985,7 +3779,8 @@ Expr::Return(inner, _) => {
                     &mut self.functions,
                     "  %{} = load i32, i32* %{}",
                     result, result_alloca
-                ).unwrap();
+                )
+                .unwrap();
                 Ok(Val::Reg(result))
             }
             Expr::Index { target, index } => {
@@ -2998,32 +3793,39 @@ Expr::Return(inner, _) => {
                     &mut self.functions,
                     "  %{} = getelementptr i8, i8* %{}, i32 4",
                     len_ptr, ptr
-                ).unwrap();
+                )
+                .unwrap();
                 let len_i32 = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = bitcast i8* %{} to i32*",
                     len_i32, len_ptr
-                ).unwrap();
+                )
+                .unwrap();
                 let list_len = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = load i32, i32* %{}",
                     list_len, len_i32
-                ).unwrap();
+                )
+                .unwrap();
                 let oob = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = icmp uge i32 {}, %{}",
-                    oob, idx.as_str(), list_len
-                ).unwrap();
+                    oob,
+                    idx.as_str(),
+                    list_len
+                )
+                .unwrap();
                 let panic_label = self.next_block_label("index_oob");
                 let cont_label = self.next_block_label("index_cont");
                 writeln!(
                     &mut self.functions,
                     "  br i1 %{}, label %{}, label %{}",
                     oob, panic_label, cont_label
-                ).unwrap();
+                )
+                .unwrap();
                 writeln!(&mut self.functions, "{}:", panic_label).unwrap();
                 let bounds_msg = self.emit_string_const("list index out of bounds");
                 let bounds_msg_ptr = self.next_temp();
@@ -3031,7 +3833,8 @@ Expr::Return(inner, _) => {
                     &mut self.functions,
                     "  %{} = getelementptr [23 x i8], [23 x i8]* @{}, i32 0, i32 0",
                     bounds_msg_ptr, bounds_msg
-                ).unwrap();
+                )
+                .unwrap();
                 writeln!(
                     &mut self.functions,
                     "  call void @__rt_panic_bounds(i8* %{})",
@@ -3066,20 +3869,25 @@ Expr::Return(inner, _) => {
                 writeln!(
                     &mut self.functions,
                     "  %{} = mul i32 {}, {}",
-                    elem_off, idx.as_str(), elem_size
-                ).unwrap();
+                    elem_off,
+                    idx.as_str(),
+                    elem_size
+                )
+                .unwrap();
                 let offset = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = add i32 %{}, 8",
                     offset, elem_off
-                ).unwrap();
+                )
+                .unwrap();
                 let elem_ptr = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = getelementptr i8, i8* %{}, i32 %{}",
                     elem_ptr, ptr, offset
-                ).unwrap();
+                )
+                .unwrap();
                 match elem_type {
                     "double" => {
                         let double_ptr = self.next_temp();
@@ -3087,13 +3895,15 @@ Expr::Return(inner, _) => {
                             &mut self.functions,
                             "  %{} = bitcast i8* %{} to double*",
                             double_ptr, elem_ptr
-                        ).unwrap();
+                        )
+                        .unwrap();
                         let loaded = self.next_temp();
                         writeln!(
                             &mut self.functions,
                             "  %{} = load double, double* %{}",
                             loaded, double_ptr
-                        ).unwrap();
+                        )
+                        .unwrap();
                         Ok(Val::Reg(loaded))
                     }
                     _ => {
@@ -3102,13 +3912,15 @@ Expr::Return(inner, _) => {
                             &mut self.functions,
                             "  %{} = bitcast i8* %{} to i32*",
                             i32_ptr, elem_ptr
-                        ).unwrap();
+                        )
+                        .unwrap();
                         let loaded = self.next_temp();
                         writeln!(
                             &mut self.functions,
                             "  %{} = load i32, i32* %{}",
                             loaded, i32_ptr
-                        ).unwrap();
+                        )
+                        .unwrap();
                         Ok(Val::Reg(loaded))
                     }
                 }
@@ -3121,28 +3933,46 @@ Expr::Return(inner, _) => {
                 let mut field_type = "i32".to_string();
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
-                } else { None };
+                } else {
+                    None
+                };
                 if let Some(ref name) = target_name
-                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
-                        for sf in &sdef.fields {
-                            if sf.name == *field {
-                                field_type = sf.typ.clone();
-                                break;
-                            }
-                            offset += match sf.typ.as_str() {
-                                "i32" | "bool" => 4,
-                                "f64" | "float" | "double" => 8,
-                                _ => 8,
-                            };
+                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name))
+                {
+                    for sf in &sdef.fields {
+                        if sf.name == *field {
+                            field_type = sf.typ.clone();
+                            break;
                         }
+                        offset += match sf.typ.as_str() {
+                            "i32" | "bool" => 4,
+                            "f64" | "float" | "double" => 8,
+                            _ => 8,
+                        };
                     }
+                }
                 if field_type == "i32" || field_type == "bool" {
                     let elem_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                        elem_ptr, ptr, offset
+                    )
+                    .unwrap();
                     let typed_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", typed_ptr, elem_ptr).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %{} to i32*",
+                        typed_ptr, elem_ptr
+                    )
+                    .unwrap();
                     let loaded = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = load i32, i32* %{}", loaded, typed_ptr).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load i32, i32* %{}",
+                        loaded, typed_ptr
+                    )
+                    .unwrap();
                     Ok(Val::Reg(loaded))
                 } else {
                     Err(CompileError::new("field is not i32/bool"))
@@ -3153,16 +3983,39 @@ Expr::Return(inner, _) => {
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let offset = (*index as i32) * 8;
                 let elem_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                    elem_ptr, ptr, offset
+                )
+                .unwrap();
                 let typed_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i64*", typed_ptr, elem_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i64*",
+                    typed_ptr, elem_ptr
+                )
+                .unwrap();
                 let loaded = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = load i64, i64* %{}", loaded, typed_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i64, i64* %{}",
+                    loaded, typed_ptr
+                )
+                .unwrap();
                 let truncated = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = trunc i64 %{} to i32", truncated, loaded).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = trunc i64 %{} to i32",
+                    truncated, loaded
+                )
+                .unwrap();
                 Ok(Val::Reg(truncated))
             }
-            _ => Err(CompileError::new(format!("unexpected expression in int-context: {:?}", expr))),
+            _ => Err(CompileError::new(format!(
+                "unexpected expression in int-context: {:?}",
+                expr
+            ))),
         }
     }
 
@@ -3179,10 +4032,17 @@ Expr::Return(inner, _) => {
             Expr::Call { func, args } => {
                 let ret_ty = self
                     .builtin_return_type(func)
-                    .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
+                    .or_else(|| {
+                        self.function_sigs
+                            .get(&self.resolve_function_name(func))
+                            .copied()
+                    })
                     .unwrap_or("void");
                 if ret_ty != "double" {
-                    return Err(CompileError::new(format!("{} does not return double", func)));
+                    return Err(CompileError::new(format!(
+                        "{} does not return double",
+                        func
+                    )));
                 }
                 let result = self
                     .emit_call(func, args, params, locals)?
@@ -3194,17 +4054,35 @@ Expr::Return(inner, _) => {
                     return match typ {
                         Type::F64 => {
                             let res = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = load double, double* %{}", res, alloca).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = load double, double* %{}",
+                                res, alloca
+                            )
+                            .unwrap();
                             Ok(Val::Reg(res))
                         }
                         Type::I32 => {
                             let res = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = load i32, i32* %{}", res, alloca).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = load i32, i32* %{}",
+                                res, alloca
+                            )
+                            .unwrap();
                             let converted = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = sitofp i32 %{} to double", converted, res).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = sitofp i32 %{} to double",
+                                converted, res
+                            )
+                            .unwrap();
                             Ok(Val::Reg(converted))
                         }
-                        Type::Ptr => Err(CompileError::new(format!("variable '{}' is a string, cannot convert to float", name))),
+                        Type::Ptr => Err(CompileError::new(format!(
+                            "variable '{}' is a string, cannot convert to float",
+                            name
+                        ))),
                         _ => {
                             return Err(CompileError::new(format!(
                                 "unsupported type in float context for variable '{}'",
@@ -3213,7 +4091,10 @@ Expr::Return(inner, _) => {
                         }
                     };
                 }
-                Err(CompileError::new(format!("variable '{}' is not a float", name)))
+                Err(CompileError::new(format!(
+                    "variable '{}' is not a float",
+                    name
+                )))
             }
             Expr::Unary(op, inner, _) => {
                 let v = self.generate_float_expr(inner, params, locals)?;
@@ -3221,14 +4102,27 @@ Expr::Return(inner, _) => {
                     UnaryOp::Pos => Ok(v),
                     UnaryOp::Neg => {
                         let res = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fsub double 0.0, {}", res, v.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fsub double 0.0, {}",
+                            res,
+                            v.as_str()
+                        )
+                        .unwrap();
                         Ok(Val::Reg(res))
                     }
                     UnaryOp::Not => {
                         let res = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp one double {}, 0.0", res, v.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp one double {}, 0.0",
+                            res,
+                            v.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, res).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, res)
+                            .unwrap();
                         Ok(Val::Reg(zext))
                     }
                 }
@@ -3239,78 +4133,200 @@ Expr::Return(inner, _) => {
                 let res = self.next_temp();
 
                 match op {
-                    BinOp::Add => writeln!(&mut self.functions, "  %{} = fadd double {}, {}", res, lv.as_str(), rv.as_str()),
-                    BinOp::Sub => writeln!(&mut self.functions, "  %{} = fsub double {}, {}", res, lv.as_str(), rv.as_str()),
-                    BinOp::Mul => writeln!(&mut self.functions, "  %{} = fmul double {}, {}", res, lv.as_str(), rv.as_str()),
-                    BinOp::Div => writeln!(&mut self.functions, "  %{} = fdiv double {}, {}", res, lv.as_str(), rv.as_str()),
+                    BinOp::Add => writeln!(
+                        &mut self.functions,
+                        "  %{} = fadd double {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
+                    BinOp::Sub => writeln!(
+                        &mut self.functions,
+                        "  %{} = fsub double {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
+                    BinOp::Mul => writeln!(
+                        &mut self.functions,
+                        "  %{} = fmul double {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
+                    BinOp::Div => writeln!(
+                        &mut self.functions,
+                        "  %{} = fdiv double {}, {}",
+                        res,
+                        lv.as_str(),
+                        rv.as_str()
+                    ),
                     BinOp::Pow => {
                         let pow = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = call double @llvm.pow.f64(double {}, double {})", pow, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = call double @llvm.pow.f64(double {}, double {})",
+                            pow,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         return Ok(Val::Reg(pow));
                     }
                     BinOp::Eq => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp oeq double {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp oeq double {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Ne => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp one double {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp one double {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Lt => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp olt double {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp olt double {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Le => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp ole double {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp ole double {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Gt => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp ogt double {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp ogt double {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Ge => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp oge double {}, {}", cmp, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp oge double {}, {}",
+                            cmp,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp).unwrap();
+                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, cmp)
+                            .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::And => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp one double {}, 0.0", cmp, lv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp one double {}, 0.0",
+                            cmp,
+                            lv.as_str()
+                        )
+                        .unwrap();
                         let and_res = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = and i1 %{}, {}", and_res, cmp, rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = and i1 %{}, {}",
+                            and_res,
+                            cmp,
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, and_res).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = zext i1 %{} to i32",
+                            zext, and_res
+                        )
+                        .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::Or => {
                         let cmp = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = fcmp one double {}, 0.0", cmp, lv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = fcmp one double {}, 0.0",
+                            cmp,
+                            lv.as_str()
+                        )
+                        .unwrap();
                         let or_res = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = or i1 %{}, {}", or_res, cmp, rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = or i1 %{}, {}",
+                            or_res,
+                            cmp,
+                            rv.as_str()
+                        )
+                        .unwrap();
                         let zext = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = zext i1 %{} to i32", zext, or_res).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = zext i1 %{} to i32",
+                            zext, or_res
+                        )
+                        .unwrap();
                         return Ok(Val::Reg(zext));
                     }
                     BinOp::DivMod => {
                         let res = self.next_temp();
-                        writeln!(&mut self.functions, "  %{} = frem double {}, {}", res, lv.as_str(), rv.as_str()).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = frem double {}, {}",
+                            res,
+                            lv.as_str(),
+                            rv.as_str()
+                        )
+                        .unwrap();
                         return Ok(Val::Reg(res));
                     }
                 }
@@ -3327,28 +4343,46 @@ Expr::Return(inner, _) => {
                 let mut field_type = "i32".to_string();
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
-                } else { None };
+                } else {
+                    None
+                };
                 if let Some(ref name) = target_name
-                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
-                        for sf in &sdef.fields {
-                            if sf.name == *field {
-                                field_type = sf.typ.clone();
-                                break;
-                            }
-                            offset += match sf.typ.as_str() {
-                                "i32" | "bool" => 4,
-                                "f64" | "float" | "double" => 8,
-                                _ => 8,
-                            };
+                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name))
+                {
+                    for sf in &sdef.fields {
+                        if sf.name == *field {
+                            field_type = sf.typ.clone();
+                            break;
                         }
+                        offset += match sf.typ.as_str() {
+                            "i32" | "bool" => 4,
+                            "f64" | "float" | "double" => 8,
+                            _ => 8,
+                        };
                     }
+                }
                 if field_type == "f64" || field_type == "float" || field_type == "double" {
                     let elem_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                        elem_ptr, ptr, offset
+                    )
+                    .unwrap();
                     let typed_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %{} to double*",
+                        typed_ptr, elem_ptr
+                    )
+                    .unwrap();
                     let loaded = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = load double, double* %{}", loaded, typed_ptr).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load double, double* %{}",
+                        loaded, typed_ptr
+                    )
+                    .unwrap();
                     Ok(Val::Reg(loaded))
                 } else {
                     Err(CompileError::new("field is not float"))
@@ -3359,14 +4393,32 @@ Expr::Return(inner, _) => {
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let offset = (*index as i32) * 8;
                 let elem_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                    elem_ptr, ptr, offset
+                )
+                .unwrap();
                 let typed_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to double*",
+                    typed_ptr, elem_ptr
+                )
+                .unwrap();
                 let loaded = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = load double, double* %{}", loaded, typed_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load double, double* %{}",
+                    loaded, typed_ptr
+                )
+                .unwrap();
                 Ok(Val::Reg(loaded))
             }
-            _ => Err(CompileError::new(format!("unexpected expression in float-context: {:?}", expr))),
+            _ => Err(CompileError::new(format!(
+                "unexpected expression in float-context: {:?}",
+                expr
+            ))),
         }
     }
 
@@ -3412,7 +4464,7 @@ Expr::Return(inner, _) => {
             bytes.len(),
             escaped
         )
-            .unwrap();
+        .unwrap();
 
         id
     }
@@ -3466,10 +4518,12 @@ Expr::Return(inner, _) => {
             Expr::Borrow { name, .. } => {
                 self.emit_borrow_ptr(name, params, locals, result)?;
             }
-                _ => return Err(CompileError::new(format!(
+            _ => {
+                return Err(CompileError::new(format!(
                     "print: unsupported argument{}",
                     self.stdlib_hint("print")
-                ))),
+                )));
+            }
         }
         Ok(())
     }
@@ -3499,16 +4553,42 @@ Expr::Return(inner, _) => {
                     &mut self.functions,
                     "  %{} = call i8* @malloc(i64 {})",
                     malloc_reg, alloc_size
-                ).unwrap();
+                )
+                .unwrap();
                 // Store capacity and length in header
                 let cap_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", cap_ptr, malloc_reg).unwrap();
-                writeln!(&mut self.functions, "  store i32 {}, i32* %{}", count, cap_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    cap_ptr, malloc_reg
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}",
+                    count, cap_ptr
+                )
+                .unwrap();
                 let len_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 4", len_ptr, malloc_reg).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 4",
+                    len_ptr, malloc_reg
+                )
+                .unwrap();
                 let len_ptr_i32 = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", len_ptr_i32, len_ptr).unwrap();
-                writeln!(&mut self.functions, "  store i32 {}, i32* %{}", count, len_ptr_i32).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    len_ptr_i32, len_ptr
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}",
+                    count, len_ptr_i32
+                )
+                .unwrap();
                 // Store elements at offset 8
                 for (i, item) in items.iter().enumerate() {
                     let val = match elem_type {
@@ -3520,8 +4600,11 @@ Expr::Return(inner, _) => {
                     writeln!(
                         &mut self.functions,
                         "  %{} = getelementptr i8, i8* %{}, i32 {}",
-                        ptr_reg, malloc_reg, (8 + elem_off)
-                    ).unwrap();
+                        ptr_reg,
+                        malloc_reg,
+                        (8 + elem_off)
+                    )
+                    .unwrap();
                     match elem_type {
                         "double" => {
                             let double_ptr = self.next_temp();
@@ -3529,12 +4612,15 @@ Expr::Return(inner, _) => {
                                 &mut self.functions,
                                 "  %{} = bitcast i8* %{} to double*",
                                 double_ptr, ptr_reg
-                            ).unwrap();
+                            )
+                            .unwrap();
                             writeln!(
                                 &mut self.functions,
                                 "  store double {}, double* %{}",
-                                val.as_float_str(), double_ptr
-                            ).unwrap();
+                                val.as_float_str(),
+                                double_ptr
+                            )
+                            .unwrap();
                         }
                         _ => {
                             let i32_ptr = self.next_temp();
@@ -3542,16 +4628,24 @@ Expr::Return(inner, _) => {
                                 &mut self.functions,
                                 "  %{} = bitcast i8* %{} to i32*",
                                 i32_ptr, ptr_reg
-                            ).unwrap();
+                            )
+                            .unwrap();
                             writeln!(
                                 &mut self.functions,
                                 "  store i32 {}, i32* %{}",
-                                val.as_str(), i32_ptr
-                            ).unwrap();
+                                val.as_str(),
+                                i32_ptr
+                            )
+                            .unwrap();
                         }
                     }
                 }
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i8*",
+                    result, malloc_reg
+                )
+                .unwrap();
             }
             Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
                 let id = self.emit_string_const(s);
@@ -3563,7 +4657,11 @@ Expr::Return(inner, _) => {
             Expr::Call { func, args } => {
                 let ty = self
                     .builtin_return_type(func)
-                    .or_else(|| self.function_sigs.get(&self.resolve_function_name(func)).copied())
+                    .or_else(|| {
+                        self.function_sigs
+                            .get(&self.resolve_function_name(func))
+                            .copied()
+                    })
                     .unwrap_or("void");
                 if ty != "i8*" {
                     return Err(CompileError::new(format!(
@@ -3572,8 +4670,14 @@ Expr::Return(inner, _) => {
                     )));
                 }
                 let call_result = self.emit_call(func, args, params, locals)?;
-                let call_reg = call_result.ok_or_else(|| CompileError::new("expected call result"))?;
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, call_reg).unwrap();
+                let call_reg =
+                    call_result.ok_or_else(|| CompileError::new("expected call result"))?;
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i8*",
+                    result, call_reg
+                )
+                .unwrap();
             }
             Expr::Binary(l, op, r, _) if *op == BinOp::Add => {
                 let left_ty = self.infer_expr_type(l, params, locals);
@@ -3596,15 +4700,24 @@ Expr::Return(inner, _) => {
                         &mut self.functions,
                         "  %{} = getelementptr [5 x i8], [5 x i8]* @{}, i32 0, i32 0",
                         fmt_ptr, fmt_id
-                    ).unwrap();
+                    )
+                    .unwrap();
                     writeln!(
                         &mut self.functions,
                         "  call i32 (i8*, i8*, ...) @sprintf(i8* %{}, i8* %{}, i8* %{}, i8* %{})",
                         buf_ptr, fmt_ptr, lhs, rhs
-                    ).unwrap();
-                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, buf_ptr).unwrap();
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %{} to i8*",
+                        result, buf_ptr
+                    )
+                    .unwrap();
                 } else {
-                    return Err(CompileError::new("string concatenation requires two strings"));
+                    return Err(CompileError::new(
+                        "string concatenation requires two strings",
+                    ));
                 }
             }
             Expr::StructLiteral { name, fields } => {
@@ -3623,40 +4736,98 @@ Expr::Return(inner, _) => {
                         total_size += size;
                     }
                     let malloc_reg = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = call i8* @malloc(i64 {})", malloc_reg, total_size).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = call i8* @malloc(i64 {})",
+                        malloc_reg, total_size
+                    )
+                    .unwrap();
                     for (fname, fval) in fields {
-                        if let Some((_, offset, typ)) = field_data.iter().find(|(n, _, _)| n == fname) {
+                        if let Some((_, offset, typ)) =
+                            field_data.iter().find(|(n, _, _)| n == fname)
+                        {
                             let elem_ptr = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, malloc_reg, offset).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                                elem_ptr, malloc_reg, offset
+                            )
+                            .unwrap();
                             match typ.as_str() {
                                 "i32" | "bool" => {
                                     let val = self.generate_int_expr(fval, params, locals)?;
                                     let typed_ptr = self.next_temp();
-                                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", typed_ptr, elem_ptr).unwrap();
-                                    writeln!(&mut self.functions, "  store i32 {}, i32* %{}", val.as_str(), typed_ptr).unwrap();
+                                    writeln!(
+                                        &mut self.functions,
+                                        "  %{} = bitcast i8* %{} to i32*",
+                                        typed_ptr, elem_ptr
+                                    )
+                                    .unwrap();
+                                    writeln!(
+                                        &mut self.functions,
+                                        "  store i32 {}, i32* %{}",
+                                        val.as_str(),
+                                        typed_ptr
+                                    )
+                                    .unwrap();
                                 }
                                 "f64" | "float" | "double" => {
                                     let val = self.generate_float_expr(fval, params, locals)?;
                                     let typed_ptr = self.next_temp();
-                                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
-                                    writeln!(&mut self.functions, "  store double {}, double* %{}", val.as_str(), typed_ptr).unwrap();
+                                    writeln!(
+                                        &mut self.functions,
+                                        "  %{} = bitcast i8* %{} to double*",
+                                        typed_ptr, elem_ptr
+                                    )
+                                    .unwrap();
+                                    writeln!(
+                                        &mut self.functions,
+                                        "  store double {}, double* %{}",
+                                        val.as_str(),
+                                        typed_ptr
+                                    )
+                                    .unwrap();
                                 }
                                 _ => {
                                     let val_ptr = self.next_temp();
                                     self.generate_ptr_expr(fval, params, locals, &val_ptr)?;
                                     let typed_ptr = self.next_temp();
-                                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", typed_ptr, elem_ptr).unwrap();
-                                    writeln!(&mut self.functions, "  store i8* %{}, i8** %{}", val_ptr, typed_ptr).unwrap();
+                                    writeln!(
+                                        &mut self.functions,
+                                        "  %{} = bitcast i8* %{} to i8**",
+                                        typed_ptr, elem_ptr
+                                    )
+                                    .unwrap();
+                                    writeln!(
+                                        &mut self.functions,
+                                        "  store i8* %{}, i8** %{}",
+                                        val_ptr, typed_ptr
+                                    )
+                                    .unwrap();
                                 }
                             }
                         }
                     }
-                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %{} to i8*",
+                        result, malloc_reg
+                    )
+                    .unwrap();
                 } else {
-                    writeln!(&mut self.functions, "  %{} = call i8* @malloc(i64 0)", result).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = call i8* @malloc(i64 0)",
+                        result
+                    )
+                    .unwrap();
                 }
             }
-            Expr::EnumLiteral { enum_name, variant_name, args } => {
+            Expr::EnumLiteral {
+                enum_name,
+                variant_name,
+                args,
+            } => {
                 let enum_defs = self.enum_defs.clone();
                 let edef = enum_defs.iter().find(|e| e.name == *enum_name);
                 let mut discriminant = 0i32;
@@ -3681,95 +4852,222 @@ Expr::Return(inner, _) => {
                         }
                     }
                 }
-                if max_payload < 4 { max_payload = 4; }
+                if max_payload < 4 {
+                    max_payload = 4;
+                }
                 let alloc_size = 4 + max_payload;
                 let malloc_reg = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = call i8* @malloc(i64 {})", malloc_reg, alloc_size).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = call i8* @malloc(i64 {})",
+                    malloc_reg, alloc_size
+                )
+                .unwrap();
                 // Store discriminant at offset 0
                 let disc_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", disc_ptr, malloc_reg).unwrap();
-                writeln!(&mut self.functions, "  store i32 {}, i32* %{}", discriminant, disc_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    disc_ptr, malloc_reg
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}",
+                    discriminant, disc_ptr
+                )
+                .unwrap();
                 // Store payload at offset 4
                 let mut offset = 4i32;
                 for (i, arg) in args.iter().enumerate() {
                     if let Some(e) = edef
                         && let Some(v) = e.variants.iter().find(|v| v.name == *variant_name)
-                            && i < v.fields.len() {
-                                let ft = &v.fields[i];
-                                let elem_ptr = self.next_temp();
-                                writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, malloc_reg, offset).unwrap();
-                                match ft.as_str() {
-                                    "i32" | "bool" => {
-                                        let val = self.generate_int_expr(arg, params, locals)?;
-                                        let typed_ptr = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i32*", typed_ptr, elem_ptr).unwrap();
-                                        writeln!(&mut self.functions, "  store i32 {}, i32* %{}", val.as_str(), typed_ptr).unwrap();
-                                        offset += 4;
-                                    }
-                                    "f64" | "float" | "double" => {
-                                        let val = self.generate_float_expr(arg, params, locals)?;
-                                        let typed_ptr = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
-                                        writeln!(&mut self.functions, "  store double {}, double* %{}", val.as_str(), typed_ptr).unwrap();
-                                        offset += 8;
-                                    }
-                                    _ => {
-                                        let val_ptr = self.next_temp();
-                                        self.generate_ptr_expr(arg, params, locals, &val_ptr)?;
-                                        let typed_ptr = self.next_temp();
-                                        writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", typed_ptr, elem_ptr).unwrap();
-                                        writeln!(&mut self.functions, "  store i8* %{}, i8** %{}", val_ptr, typed_ptr).unwrap();
-                                        offset += 8;
-                                    }
-                                }
+                        && i < v.fields.len()
+                    {
+                        let ft = &v.fields[i];
+                        let elem_ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                            elem_ptr, malloc_reg, offset
+                        )
+                        .unwrap();
+                        match ft.as_str() {
+                            "i32" | "bool" => {
+                                let val = self.generate_int_expr(arg, params, locals)?;
+                                let typed_ptr = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = bitcast i8* %{} to i32*",
+                                    typed_ptr, elem_ptr
+                                )
+                                .unwrap();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  store i32 {}, i32* %{}",
+                                    val.as_str(),
+                                    typed_ptr
+                                )
+                                .unwrap();
+                                offset += 4;
                             }
+                            "f64" | "float" | "double" => {
+                                let val = self.generate_float_expr(arg, params, locals)?;
+                                let typed_ptr = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = bitcast i8* %{} to double*",
+                                    typed_ptr, elem_ptr
+                                )
+                                .unwrap();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  store double {}, double* %{}",
+                                    val.as_str(),
+                                    typed_ptr
+                                )
+                                .unwrap();
+                                offset += 8;
+                            }
+                            _ => {
+                                let val_ptr = self.next_temp();
+                                self.generate_ptr_expr(arg, params, locals, &val_ptr)?;
+                                let typed_ptr = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = bitcast i8* %{} to i8**",
+                                    typed_ptr, elem_ptr
+                                )
+                                .unwrap();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  store i8* %{}, i8** %{}",
+                                    val_ptr, typed_ptr
+                                )
+                                .unwrap();
+                                offset += 8;
+                            }
+                        }
+                    }
                 }
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i8*",
+                    result, malloc_reg
+                )
+                .unwrap();
             }
             Expr::Tuple(elements, _) => {
                 let alloc_size = (elements.len() * 8) as i64;
                 let malloc_reg = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = call i8* @malloc(i64 {})", malloc_reg, alloc_size).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = call i8* @malloc(i64 {})",
+                    malloc_reg, alloc_size
+                )
+                .unwrap();
                 for (i, elem) in elements.iter().enumerate() {
                     let offset = (i * 8) as i32;
                     let elem_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, malloc_reg, offset).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                        elem_ptr, malloc_reg, offset
+                    )
+                    .unwrap();
                     let elem_ty = self.infer_expr_type(elem, params, locals);
                     match elem_ty {
                         "i32" | "bool" => {
                             let val = self.generate_int_expr(elem, params, locals)?;
                             let i64_val = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = sext i32 {} to i64", i64_val, val.as_str()).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = sext i32 {} to i64",
+                                i64_val,
+                                val.as_str()
+                            )
+                            .unwrap();
                             let typed_ptr = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i64*", typed_ptr, elem_ptr).unwrap();
-                            writeln!(&mut self.functions, "  store i64 %{}, i64* %{}", i64_val, typed_ptr).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = bitcast i8* %{} to i64*",
+                                typed_ptr, elem_ptr
+                            )
+                            .unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  store i64 %{}, i64* %{}",
+                                i64_val, typed_ptr
+                            )
+                            .unwrap();
                         }
                         "double" => {
                             let val = self.generate_float_expr(elem, params, locals)?;
                             let typed_ptr = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to double*", typed_ptr, elem_ptr).unwrap();
-                            writeln!(&mut self.functions, "  store double {}, double* %{}", val.as_str(), typed_ptr).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = bitcast i8* %{} to double*",
+                                typed_ptr, elem_ptr
+                            )
+                            .unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  store double {}, double* %{}",
+                                val.as_str(),
+                                typed_ptr
+                            )
+                            .unwrap();
                         }
                         _ => {
                             let val_ptr = self.next_temp();
                             self.generate_ptr_expr(elem, params, locals, &val_ptr)?;
                             let typed_ptr = self.next_temp();
-                            writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", typed_ptr, elem_ptr).unwrap();
-                            writeln!(&mut self.functions, "  store i8* %{}, i8** %{}", val_ptr, typed_ptr).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = bitcast i8* %{} to i8**",
+                                typed_ptr, elem_ptr
+                            )
+                            .unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  store i8* %{}, i8** %{}",
+                                val_ptr, typed_ptr
+                            )
+                            .unwrap();
                         }
                     }
                 }
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i8*",
+                    result, malloc_reg
+                )
+                .unwrap();
             }
             Expr::TupleAccess { target, index } => {
                 let ptr = self.next_temp();
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let offset = (*index as i32) * 8;
                 let elem_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                    elem_ptr, ptr, offset
+                )
+                .unwrap();
                 let typed_ptr = self.next_temp();
-                writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", typed_ptr, elem_ptr).unwrap();
-                writeln!(&mut self.functions, "  %{} = load i8*, i8** %{}", result, typed_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i8**",
+                    typed_ptr, elem_ptr
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i8*, i8** %{}",
+                    result, typed_ptr
+                )
+                .unwrap();
             }
             Expr::FieldAccess { target, field } => {
                 let struct_defs = self.struct_defs.clone();
@@ -3779,27 +5077,49 @@ Expr::Return(inner, _) => {
                 let mut field_type = "i32".to_string();
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
                     Some(id.clone())
-                } else { None };
+                } else {
+                    None
+                };
                 if let Some(ref name) = target_name
-                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name)) {
-                        for sf in &sdef.fields {
-                            if sf.name == *field {
-                                field_type = sf.typ.clone();
-                                break;
-                            }
-                            offset += match sf.typ.as_str() {
-                                "i32" | "bool" => 4,
-                                "f64" | "float" | "double" => 8,
-                                _ => 8,
-                            };
+                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name))
+                {
+                    for sf in &sdef.fields {
+                        if sf.name == *field {
+                            field_type = sf.typ.clone();
+                            break;
                         }
+                        offset += match sf.typ.as_str() {
+                            "i32" | "bool" => 4,
+                            "f64" | "float" | "double" => 8,
+                            _ => 8,
+                        };
                     }
-                if field_type == "i8*" || field_type == "string" || field_type == "str" || field_type == "ptr" {
+                }
+                if field_type == "i8*"
+                    || field_type == "string"
+                    || field_type == "str"
+                    || field_type == "ptr"
+                {
                     let elem_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = getelementptr i8, i8* %{}, i32 {}", elem_ptr, ptr, offset).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                        elem_ptr, ptr, offset
+                    )
+                    .unwrap();
                     let ptr_ptr = self.next_temp();
-                    writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8**", ptr_ptr, elem_ptr).unwrap();
-                    writeln!(&mut self.functions, "  %{} = load i8*, i8** %{}", result, ptr_ptr).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %{} to i8**",
+                        ptr_ptr, elem_ptr
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load i8*, i8** %{}",
+                        result, ptr_ptr
+                    )
+                    .unwrap();
                 } else {
                     return Err(CompileError::new("expected string/ptr field access"));
                 }
@@ -3898,8 +5218,10 @@ Expr::Return(inner, _) => {
                 writeln!(
                     &mut self.functions,
                     "  %{} = call i8* @__rt_to_string_int(i32 {})",
-                    result, val.as_str()
-                ).unwrap();
+                    result,
+                    val.as_str()
+                )
+                .unwrap();
                 return Ok(Some(result));
             } else if ty == "double" {
                 let val = self.generate_float_expr(&args[0], params, locals)?;
@@ -3907,8 +5229,10 @@ Expr::Return(inner, _) => {
                 writeln!(
                     &mut self.functions,
                     "  %{} = call i8* @__rt_to_string_float(double {})",
-                    result, val.as_str()
-                ).unwrap();
+                    result,
+                    val.as_str()
+                )
+                .unwrap();
                 return Ok(Some(result));
             } else if ty == "i8*" {
                 let ptr = self.next_temp();
@@ -3940,22 +5264,23 @@ Expr::Return(inner, _) => {
 
         let mut call_resolved = resolved.clone();
         if let Some(func_def) = self.find_function_def(&resolved)
-            && !func_def.generic_params.is_empty() {
-                let mut concrete_types = Vec::new();
-                for arg in args.iter() {
-                    let arg_type = self.infer_expr_type(arg, params, locals);
-                    let concrete = match arg_type {
-                        "i32" => Type::I32,
-                        "double" => Type::F64,
-                        "i8*" => Type::Ptr,
-                        "%String*" => Type::String,
-                        _ => Type::Unknown,
-                    };
-                    concrete_types.push(concrete);
-                }
-                let mangled = self.monomorphize_function(&func_def.clone(), &concrete_types)?;
-                call_resolved = mangled;
+            && !func_def.generic_params.is_empty()
+        {
+            let mut concrete_types = Vec::new();
+            for arg in args.iter() {
+                let arg_type = self.infer_expr_type(arg, params, locals);
+                let concrete = match arg_type {
+                    "i32" => Type::I32,
+                    "double" => Type::F64,
+                    "i8*" => Type::Ptr,
+                    "%String*" => Type::String,
+                    _ => Type::Unknown,
+                };
+                concrete_types.push(concrete);
             }
+            let mangled = self.monomorphize_function(&func_def.clone(), &concrete_types)?;
+            call_resolved = mangled;
+        }
 
         let param_types = self.get_function_param_types(func);
         let mut call_args = Vec::new();
@@ -3975,7 +5300,12 @@ Expr::Return(inner, _) => {
                     self.generate_ptr_expr(arg, params, locals, &ptr)?;
                     call_args.push(format!("i8* %{}", ptr));
                 }
-                _ => return Err(CompileError::new(format!("unsupported argument type in call: {}", expected_type))),
+                _ => {
+                    return Err(CompileError::new(format!(
+                        "unsupported argument type in call: {}",
+                        expected_type
+                    )));
+                }
             }
         }
 
@@ -4027,7 +5357,12 @@ Expr::Return(inner, _) => {
         }
 
         if let Some(idx) = params.iter().position(|p| p == name) {
-            writeln!(&mut self.functions, "  %{} = bitcast i8* %arg{} to i8*", result, idx).unwrap();
+            writeln!(
+                &mut self.functions,
+                "  %{} = bitcast i8* %arg{} to i8*",
+                result, idx
+            )
+            .unwrap();
             return Ok(());
         }
 
@@ -4045,8 +5380,7 @@ Expr::Return(inner, _) => {
         writeln!(
             &mut self.functions,
             "  call i32 (i8*, ...) @printf(i8* %{}, i8* %{})",
-            fmt,
-            ptr
+            fmt, ptr
         )
         .unwrap();
     }
@@ -4085,7 +5419,11 @@ Expr::Return(inner, _) => {
             fmt_str
         )
         .unwrap();
-        writeln!(&mut helpers, "  call i32 (i8*, ...) @printf(i8* %fmt, i8* %s)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  call i32 (i8*, ...) @printf(i8* %fmt, i8* %s)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  ret void").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
@@ -4098,7 +5436,11 @@ Expr::Return(inner, _) => {
             fmt_str
         )
         .unwrap();
-        writeln!(&mut helpers, "  call i32 (i8*, ...) @printf(i8* %fmt, i32 %n)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  call i32 (i8*, ...) @printf(i8* %fmt, i32 %n)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  ret void").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
@@ -4111,7 +5453,11 @@ Expr::Return(inner, _) => {
             fmt_str
         )
         .unwrap();
-        writeln!(&mut helpers, "  call i32 (i8*, ...) @printf(i8* %fmt, double %n)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  call i32 (i8*, ...) @printf(i8* %fmt, double %n)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  ret void").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
@@ -4129,7 +5475,11 @@ Expr::Return(inner, _) => {
             rb
         )
         .unwrap();
-        writeln!(&mut helpers, "  %file = call i8* @fopen(i8* %path, i8* %mode)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %file = call i8* @fopen(i8* %path, i8* %mode)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %null = icmp eq i8* %file, null").unwrap();
         writeln!(&mut helpers, "  br i1 %null, label %empty, label %read").unwrap();
         writeln!(&mut helpers, "empty:").unwrap();
@@ -4137,19 +5487,35 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  store i8 0, i8* %buf0").unwrap();
         writeln!(&mut helpers, "  ret i8* %buf0").unwrap();
         writeln!(&mut helpers, "read:").unwrap();
-        writeln!(&mut helpers, "  %seek = call i32 @fseek(i8* %file, i64 0, i32 2)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %seek = call i32 @fseek(i8* %file, i64 0, i32 2)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %size = call i64 @ftell(i8* %file)").unwrap();
         writeln!(&mut helpers, "  call void @rewind(i8* %file)").unwrap();
         writeln!(&mut helpers, "  %alloc = add i64 %size, 1").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(&mut helpers, "  %readn = call i64 @fread(i8* %buf, i64 1, i64 %size, i8* %file)").unwrap();
-        writeln!(&mut helpers, "  %end = getelementptr i8, i8* %buf, i64 %readn").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %readn = call i64 @fread(i8* %buf, i64 1, i64 %size, i8* %file)"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %end = getelementptr i8, i8* %buf, i64 %readn"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
         writeln!(&mut helpers, "  call i32 @fclose(i8* %file)").unwrap();
         writeln!(&mut helpers, "  ret i8* %buf").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
-        writeln!(&mut helpers, "define i32 @__rt_write_file(i8* %path, i8* %contents) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i32 @__rt_write_file(i8* %path, i8* %contents) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(
             &mut helpers,
@@ -4157,14 +5523,22 @@ Expr::Return(inner, _) => {
             wb
         )
         .unwrap();
-        writeln!(&mut helpers, "  %file = call i8* @fopen(i8* %path, i8* %mode)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %file = call i8* @fopen(i8* %path, i8* %mode)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %null = icmp eq i8* %file, null").unwrap();
         writeln!(&mut helpers, "  br i1 %null, label %fail, label %write").unwrap();
         writeln!(&mut helpers, "fail:").unwrap();
         writeln!(&mut helpers, "  ret i32 -1").unwrap();
         writeln!(&mut helpers, "write:").unwrap();
         writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %contents)").unwrap();
-        writeln!(&mut helpers, "  %written = call i64 @fwrite(i8* %contents, i64 1, i64 %len, i8* %file)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %written = call i64 @fwrite(i8* %contents, i64 1, i64 %len, i8* %file)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  call i32 @fclose(i8* %file)").unwrap();
         writeln!(&mut helpers, "  %ok = icmp eq i64 %written, %len").unwrap();
         writeln!(&mut helpers, "  %res = select i1 %ok, i32 0, i32 -1").unwrap();
@@ -4172,7 +5546,11 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "}}\n").unwrap();
 
         let whitespace = self.emit_string_const(" \t\n\r\x0c\x0b");
-        writeln!(&mut helpers, "define i32 @__rt_contains(i8* %s, i8* %sub) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i32 @__rt_contains(i8* %s, i8* %sub) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %res = call i8* @strstr(i8* %s, i8* %sub)").unwrap();
         writeln!(&mut helpers, "  %found = icmp ne i8* %res, null").unwrap();
@@ -4180,25 +5558,49 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  ret i32 %ret").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
-        writeln!(&mut helpers, "define i32 @__rt_starts_with(i8* %s, i8* %prefix) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i32 @__rt_starts_with(i8* %s, i8* %prefix) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %plen = call i64 @strlen(i8* %prefix)").unwrap();
-        writeln!(&mut helpers, "  %res = call i32 @strncmp(i8* %s, i8* %prefix, i64 %plen)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %res = call i32 @strncmp(i8* %s, i8* %prefix, i64 %plen)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %eq = icmp eq i32 %res, 0").unwrap();
         writeln!(&mut helpers, "  %ret = zext i1 %eq to i32").unwrap();
         writeln!(&mut helpers, "  ret i32 %ret").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
-        writeln!(&mut helpers, "define i32 @__rt_ends_with(i8* %s, i8* %suffix) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i32 @__rt_ends_with(i8* %s, i8* %suffix) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %slen = call i64 @strlen(i8* %s)").unwrap();
         writeln!(&mut helpers, "  %sublen = call i64 @strlen(i8* %suffix)").unwrap();
         writeln!(&mut helpers, "  %tooshort = icmp ult i64 %slen, %sublen").unwrap();
-        writeln!(&mut helpers, "  br i1 %tooshort, label %false, label %check").unwrap();
+        writeln!(
+            &mut helpers,
+            "  br i1 %tooshort, label %false, label %check"
+        )
+        .unwrap();
         writeln!(&mut helpers, "check:").unwrap();
         writeln!(&mut helpers, "  %off = sub i64 %slen, %sublen").unwrap();
-        writeln!(&mut helpers, "  %start = getelementptr i8, i8* %s, i64 %off").unwrap();
-        writeln!(&mut helpers, "  %res = call i32 @strncmp(i8* %start, i8* %suffix, i64 %sublen)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %start = getelementptr i8, i8* %s, i64 %off"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %res = call i32 @strncmp(i8* %start, i8* %suffix, i64 %sublen)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %eq = icmp eq i32 %res, 0").unwrap();
         writeln!(&mut helpers, "  %ret = zext i1 %eq to i32").unwrap();
         writeln!(&mut helpers, "  ret i32 %ret").unwrap();
@@ -4206,15 +5608,31 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  ret i32 0").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
-        writeln!(&mut helpers, "define i8* @__rt_substr(i8* %s, i32 %start, i32 %length) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i8* @__rt_substr(i8* %s, i32 %start, i32 %length) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %len64 = sext i32 %length to i64").unwrap();
         writeln!(&mut helpers, "  %alloc = add i64 %len64, 1").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
         writeln!(&mut helpers, "  %start64 = sext i32 %start to i64").unwrap();
-        writeln!(&mut helpers, "  %src = getelementptr i8, i8* %s, i64 %start64").unwrap();
-        writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %src, i64 %len64, i1 false)").unwrap();
-        writeln!(&mut helpers, "  %end = getelementptr i8, i8* %buf, i64 %len64").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %src = getelementptr i8, i8* %s, i64 %start64"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %src, i64 %len64, i1 false)"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %end = getelementptr i8, i8* %buf, i64 %len64"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
         writeln!(&mut helpers, "  ret i8* %buf").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
@@ -4222,16 +5640,41 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "define i8* @__rt_trim(i8* %s) {{").unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  %ws = getelementptr [6 x i8], [6 x i8]* @{}, i32 0, i32 0", whitespace).unwrap();
-        writeln!(&mut helpers, "  %start_off = call i64 @strspn(i8* %s, i8* %ws)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %ws = getelementptr [6 x i8], [6 x i8]* @{}, i32 0, i32 0",
+            whitespace
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %start_off = call i64 @strspn(i8* %s, i8* %ws)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %remaining = sub i64 %len, %start_off").unwrap();
-        writeln!(&mut helpers, "  %start_ptr = getelementptr i8, i8* %s, i64 %start_off").unwrap();
-        writeln!(&mut helpers, "  %end_off = call i64 @strcspn(i8* %start_ptr, i8* %ws)").unwrap();
-        writeln!(&mut helpers, "  %trim_len = call i64 @llvm.umin.i64(i64 %remaining, i64 %end_off)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %start_ptr = getelementptr i8, i8* %s, i64 %start_off"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %end_off = call i64 @strcspn(i8* %start_ptr, i8* %ws)"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %trim_len = call i64 @llvm.umin.i64(i64 %remaining, i64 %end_off)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %alloc = add i64 %trim_len, 1").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
         writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %start_ptr, i64 %trim_len, i1 false)").unwrap();
-        writeln!(&mut helpers, "  %end = getelementptr i8, i8* %buf, i64 %trim_len").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %end = getelementptr i8, i8* %buf, i64 %trim_len"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
         writeln!(&mut helpers, "  ret i8* %buf").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
@@ -4241,14 +5684,22 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
         writeln!(&mut helpers, "  %alloc = add i64 %len, 1").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %s, i64 %alloc, i1 false)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %s, i64 %alloc, i1 false)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  br label %loop").unwrap();
         writeln!(&mut helpers, "loop:").unwrap();
         writeln!(&mut helpers, "  %pos = phi i64 [0, %entry], [%next, %body]").unwrap();
         writeln!(&mut helpers, "  %cmp = icmp eq i64 %pos, %len").unwrap();
         writeln!(&mut helpers, "  br i1 %cmp, label %done, label %body").unwrap();
         writeln!(&mut helpers, "body:").unwrap();
-        writeln!(&mut helpers, "  %ptr = getelementptr i8, i8* %buf, i64 %pos").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %ptr = getelementptr i8, i8* %buf, i64 %pos"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %ch = load i8, i8* %ptr").unwrap();
         writeln!(&mut helpers, "  %ch32 = sext i8 %ch to i32").unwrap();
         writeln!(&mut helpers, "  %up = call i32 @toupper(i32 %ch32)").unwrap();
@@ -4265,14 +5716,22 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
         writeln!(&mut helpers, "  %alloc = add i64 %len, 1").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %s, i64 %alloc, i1 false)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %s, i64 %alloc, i1 false)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  br label %loop").unwrap();
         writeln!(&mut helpers, "loop:").unwrap();
         writeln!(&mut helpers, "  %pos = phi i64 [0, %entry], [%next, %body]").unwrap();
         writeln!(&mut helpers, "  %cmp = icmp eq i64 %pos, %len").unwrap();
         writeln!(&mut helpers, "  br i1 %cmp, label %done, label %body").unwrap();
         writeln!(&mut helpers, "body:").unwrap();
-        writeln!(&mut helpers, "  %ptr = getelementptr i8, i8* %buf, i64 %pos").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %ptr = getelementptr i8, i8* %buf, i64 %pos"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %ch = load i8, i8* %ptr").unwrap();
         writeln!(&mut helpers, "  %ch32 = sext i8 %ch to i32").unwrap();
         writeln!(&mut helpers, "  %lo = call i32 @tolower(i32 %ch32)").unwrap();
@@ -4318,7 +5777,11 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 1024)").unwrap();
         writeln!(&mut helpers, "  %stdin_ptr = load i8*, i8** @stdin").unwrap();
-        writeln!(&mut helpers, "  %res = call i8* @fgets(i8* %buf, i32 1024, i8* %stdin_ptr)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %res = call i8* @fgets(i8* %buf, i32 1024, i8* %stdin_ptr)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %null = icmp eq i8* %res, null").unwrap();
         writeln!(&mut helpers, "  br i1 %null, label %empty, label %strip_nl").unwrap();
         writeln!(&mut helpers, "empty:").unwrap();
@@ -4327,7 +5790,11 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "strip_nl:").unwrap();
         writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %buf)").unwrap();
         writeln!(&mut helpers, "  %last_off = sub i64 %len, 1").unwrap();
-        writeln!(&mut helpers, "  %last_ptr = getelementptr i8, i8* %buf, i64 %last_off").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %last_ptr = getelementptr i8, i8* %buf, i64 %last_off"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %last_ch = load i8, i8* %last_ptr").unwrap();
         writeln!(&mut helpers, "  %is_nl = icmp eq i8 %last_ch, 10").unwrap();
         writeln!(&mut helpers, "  br i1 %is_nl, label %strip, label %ret").unwrap();
@@ -4346,12 +5813,21 @@ Expr::Return(inner, _) => {
             &mut helpers,
             "  %fmt = getelementptr [3 x i8], [3 x i8]* @{}, i32 0, i32 0",
             fmt_d
-        ).unwrap();
-        writeln!(&mut helpers, "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, i32 %n)").unwrap();
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, i32 %n)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  ret i8* %buf").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
-        writeln!(&mut helpers, "define i8* @__rt_to_string_float(double %n) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i8* @__rt_to_string_float(double %n) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 64)").unwrap();
         let fmt_f = self.emit_string_const("%f");
@@ -4359,8 +5835,13 @@ Expr::Return(inner, _) => {
             &mut helpers,
             "  %fmt = getelementptr [3 x i8], [3 x i8]* @{}, i32 0, i32 0",
             fmt_f
-        ).unwrap();
-        writeln!(&mut helpers, "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, double %n)").unwrap();
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, double %n)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  ret i8* %buf").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
@@ -4377,11 +5858,7 @@ Expr::Return(inner, _) => {
 
         // Bounds check panic
         let _bounds_msg = self.emit_string_const("list index out of bounds");
-        writeln!(
-            &mut helpers,
-            "define void @__rt_panic_bounds(i8* %msg) {{"
-        )
-        .unwrap();
+        writeln!(&mut helpers, "define void @__rt_panic_bounds(i8* %msg) {{").unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  call void @__rt_print_str(i8* %msg)").unwrap();
         writeln!(&mut helpers, "  call void @__rt_exit(i32 1)").unwrap();
@@ -4391,54 +5868,110 @@ Expr::Return(inner, _) => {
         // List runtime helpers
         writeln!(&mut helpers, "define i32 @__rt_list_len(i8* %list) {{").unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len_ptr = getelementptr i8, i8* %list, i32 4").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %len_ptr = getelementptr i8, i8* %list, i32 4"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %len_i32 = bitcast i8* %len_ptr to i32*").unwrap();
         writeln!(&mut helpers, "  %len = load i32, i32* %len_i32").unwrap();
         writeln!(&mut helpers, "  ret i32 %len").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
-        writeln!(&mut helpers, "define i8* @__rt_list_push(i8* %list, i32 %val) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i8* @__rt_list_push(i8* %list, i32 %val) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %cap_ptr = bitcast i8* %list to i32*").unwrap();
         writeln!(&mut helpers, "  %cap = load i32, i32* %cap_ptr").unwrap();
-        writeln!(&mut helpers, "  %len_gep = getelementptr i8, i8* %list, i32 4").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %len_gep = getelementptr i8, i8* %list, i32 4"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %len_ptr = bitcast i8* %len_gep to i32*").unwrap();
         writeln!(&mut helpers, "  %len = load i32, i32* %len_ptr").unwrap();
         writeln!(&mut helpers, "  %needs_grow = icmp eq i32 %len, %cap").unwrap();
-        writeln!(&mut helpers, "  br i1 %needs_grow, label %grow, label %store").unwrap();
+        writeln!(
+            &mut helpers,
+            "  br i1 %needs_grow, label %grow, label %store"
+        )
+        .unwrap();
         writeln!(&mut helpers, "grow:").unwrap();
         writeln!(&mut helpers, "  %newcap = mul i32 %cap, 2").unwrap();
         writeln!(&mut helpers, "  %cap_zero = icmp eq i32 %newcap, 0").unwrap();
-        writeln!(&mut helpers, "  %newcap2 = select i1 %cap_zero, i32 4, i32 %newcap").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %newcap2 = select i1 %cap_zero, i32 4, i32 %newcap"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %old_data_bytes = mul i32 %cap, 4").unwrap();
         writeln!(&mut helpers, "  %old_total = add i32 %old_data_bytes, 8").unwrap();
-        writeln!(&mut helpers, "  %old_total_i64 = sext i32 %old_total to i64").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %old_total_i64 = sext i32 %old_total to i64"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %new_data_bytes = mul i32 %newcap2, 4").unwrap();
         writeln!(&mut helpers, "  %new_total = add i32 %new_data_bytes, 8").unwrap();
-        writeln!(&mut helpers, "  %new_total_i64 = sext i32 %new_total to i64").unwrap();
-        writeln!(&mut helpers, "  %newlist = call i8* @malloc(i64 %new_total_i64)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %new_total_i64 = sext i32 %new_total to i64"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %newlist = call i8* @malloc(i64 %new_total_i64)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %newlist, i8* %list, i64 %old_total_i64, i1 false)").unwrap();
         writeln!(&mut helpers, "  call void @free(i8* %list)").unwrap();
         writeln!(&mut helpers, "  store i32 %newcap2, i32* %newlist").unwrap();
         writeln!(&mut helpers, "  br label %store").unwrap();
         writeln!(&mut helpers, "store:").unwrap();
-        writeln!(&mut helpers, "  %cur_list = phi i8* [%list, %entry], [%newlist, %grow]").unwrap();
-        writeln!(&mut helpers, "  %cur_len = phi i32 [%len, %entry], [%len, %grow]").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %cur_list = phi i8* [%list, %entry], [%newlist, %grow]"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %cur_len = phi i32 [%len, %entry], [%len, %grow]"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %elem_off = mul i32 %cur_len, 4").unwrap();
         writeln!(&mut helpers, "  %elem_off_total = add i32 %elem_off, 8").unwrap();
-        writeln!(&mut helpers, "  %elem_gep = getelementptr i8, i8* %cur_list, i32 %elem_off_total").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %elem_gep = getelementptr i8, i8* %cur_list, i32 %elem_off_total"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %elem_ptr = bitcast i8* %elem_gep to i32*").unwrap();
         writeln!(&mut helpers, "  store i32 %val, i32* %elem_ptr").unwrap();
         writeln!(&mut helpers, "  %new_len = add i32 %cur_len, 1").unwrap();
-        writeln!(&mut helpers, "  %len_store_gep = getelementptr i8, i8* %cur_list, i32 4").unwrap();
-        writeln!(&mut helpers, "  %len_store_ptr = bitcast i8* %len_store_gep to i32*").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %len_store_gep = getelementptr i8, i8* %cur_list, i32 4"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  %len_store_ptr = bitcast i8* %len_store_gep to i32*"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  store i32 %new_len, i32* %len_store_ptr").unwrap();
         writeln!(&mut helpers, "  ret i8* %cur_list").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
         writeln!(&mut helpers, "define i32 @__rt_list_pop(i8* %list) {{").unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len_gep = getelementptr i8, i8* %list, i32 4").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %len_gep = getelementptr i8, i8* %list, i32 4"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %len_ptr = bitcast i8* %len_gep to i32*").unwrap();
         writeln!(&mut helpers, "  %len = load i32, i32* %len_ptr").unwrap();
         writeln!(&mut helpers, "  %is_empty = icmp eq i32 %len, 0").unwrap();
@@ -4449,7 +5982,11 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  %new_len = sub i32 %len, 1").unwrap();
         writeln!(&mut helpers, "  %elem_off = mul i32 %new_len, 4").unwrap();
         writeln!(&mut helpers, "  %elem_off_total = add i32 %elem_off, 8").unwrap();
-        writeln!(&mut helpers, "  %elem_gep = getelementptr i8, i8* %list, i32 %elem_off_total").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %elem_gep = getelementptr i8, i8* %list, i32 %elem_off_total"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %elem_ptr = bitcast i8* %elem_gep to i32*").unwrap();
         writeln!(&mut helpers, "  %val = load i32, i32* %elem_ptr").unwrap();
         writeln!(&mut helpers, "  store i32 %new_len, i32* %len_ptr").unwrap();
@@ -4460,13 +5997,26 @@ Expr::Return(inner, _) => {
         let hex_fmt = self.emit_string_const("%08x");
         writeln!(&mut helpers, "define i8* @__rt_to_hex(i32 %n) {{").unwrap();
         writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 11)").unwrap();
-        writeln!(&mut helpers, "  %fmt = getelementptr [5 x i8], [5 x i8]* @{}, i32 0, i32 0", hex_fmt).unwrap();
-        writeln!(&mut helpers, "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, i32 %n)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %fmt = getelementptr [5 x i8], [5 x i8]* @{}, i32 0, i32 0",
+            hex_fmt
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, i32 %n)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  ret i8* %buf").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
         // __rt_str_repeat(i8*, i32) -> i8*
-        writeln!(&mut helpers, "define i8* @__rt_str_repeat(i8* %s, i32 %count) {{").unwrap();
+        writeln!(
+            &mut helpers,
+            "define i8* @__rt_str_repeat(i8* %s, i32 %count) {{"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
         writeln!(&mut helpers, "  %count64 = sext i32 %count to i64").unwrap();
         writeln!(&mut helpers, "  %total = mul i64 %len, %count64").unwrap();
@@ -4478,13 +6028,25 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  %i = phi i32 [0, %0], [%next, %loop]").unwrap();
         writeln!(&mut helpers, "  %i64 = sext i32 %i to i64").unwrap();
         writeln!(&mut helpers, "  %off = mul i64 %i64, %len").unwrap();
-        writeln!(&mut helpers, "  %dst = getelementptr i8, i8* %buf, i64 %off").unwrap();
-        writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %dst, i8* %s, i64 %len, i1 false)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %dst = getelementptr i8, i8* %buf, i64 %off"
+        )
+        .unwrap();
+        writeln!(
+            &mut helpers,
+            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %dst, i8* %s, i64 %len, i1 false)"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  %next = add i32 %i, 1").unwrap();
         writeln!(&mut helpers, "  %done_flag = icmp eq i32 %next, %count").unwrap();
         writeln!(&mut helpers, "  br i1 %done_flag, label %done, label %loop").unwrap();
         writeln!(&mut helpers, "done:").unwrap();
-        writeln!(&mut helpers, "  %end = getelementptr i8, i8* %buf, i64 %total").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %end = getelementptr i8, i8* %buf, i64 %total"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
         writeln!(&mut helpers, "  ret i8* %buf").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
@@ -4511,7 +6073,11 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "define double @__rt_abs(double %n) {{").unwrap();
         writeln!(&mut helpers, "  %cmp = fcmp olt double %n, 0.0").unwrap();
         writeln!(&mut helpers, "  %neg = fsub double -0.0, %n").unwrap();
-        writeln!(&mut helpers, "  %r = select i1 %cmp, double %neg, double %n").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %r = select i1 %cmp, double %neg, double %n"
+        )
+        .unwrap();
         writeln!(&mut helpers, "  ret double %r").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
@@ -4607,9 +6173,9 @@ Expr::Return(inner, _) => {
 
 #[cfg(test)]
 mod tests {
+    use super::LLVMTextGen;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
-    use super::LLVMTextGen;
 
     fn compile_expr(input: &str) -> String {
         let input = format!("import std\n{}", input);
@@ -4753,8 +6319,10 @@ mod tests {
 
     #[test]
     fn test_compile_multiline_string() {
-        let ir = compile_expr(r#""""multi
-line"""#);
+        let ir = compile_expr(
+            r#""""multi
+line"""#,
+        );
         assert!(ir.contains("\\6D\\75\\6C\\74\\69")); // "multi" in hex
         assert!(ir.contains("\\6C\\69\\6E\\65")); // "line" in hex
     }
@@ -4775,7 +6343,9 @@ line"""#);
 
     #[test]
     fn test_compile_if_expression() {
-        let ir = compile_expr("fn test():\n    let x = 1\n    if x:\n        return 1\n    else:\n        return 0");
+        let ir = compile_expr(
+            "fn test():\n    let x = 1\n    if x:\n        return 1\n    else:\n        return 0",
+        );
         assert!(ir.contains("br i1"));
         assert!(ir.contains("then_"));
         assert!(ir.contains("else_"));
@@ -4784,7 +6354,9 @@ line"""#);
 
     #[test]
     fn test_compile_nested_if() {
-        let ir = compile_expr("fn test():\n    let x = 1\n    let y = 1\n    if x:\n        if y:\n            return 1\n        else:\n            return 0");
+        let ir = compile_expr(
+            "fn test():\n    let x = 1\n    let y = 1\n    if x:\n        if y:\n            return 1\n        else:\n            return 0",
+        );
         assert!(ir.contains("then_"));
         assert!(ir.contains("else_"));
     }
@@ -4819,7 +6391,9 @@ line"""#);
 
     #[test]
     fn test_compile_chained_operations() {
-        let ir = compile_expr("fn test():\n    let a = 10\n    let b = 5\n    let c = 2\n    let d = 3\n    let e = 2\n    a + b - c * d / e");
+        let ir = compile_expr(
+            "fn test():\n    let a = 10\n    let b = 5\n    let c = 2\n    let d = 3\n    let e = 2\n    a + b - c * d / e",
+        );
         assert!(ir.contains("add i32"));
         assert!(ir.contains("sub i32"));
         assert!(ir.contains("mul i32"));

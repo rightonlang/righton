@@ -215,7 +215,7 @@ impl Lexer {
                         column: start_col,
                     }
                 }
-            },
+            }
             '&' => Token {
                 kind: TokenKind::Ampersand,
                 line: self.line,
@@ -343,7 +343,7 @@ impl Lexer {
                         column: start_col,
                     }
                 }
-            },
+            }
             '*' => {
                 if self.peek() == Some('=') {
                     self.next();
@@ -407,7 +407,7 @@ impl Lexer {
                         column: start_col,
                     }
                 }
-            },
+            }
 
             //strs
             'f' => {
@@ -622,18 +622,20 @@ impl Lexer {
                     }
                 }
                 Token {
-                    kind: if is_float { TokenKind::FloatLiteral(num) } else { TokenKind::IntLiteral(num as i32) },
+                    kind: if is_float {
+                        TokenKind::FloatLiteral(num)
+                    } else {
+                        TokenKind::IntLiteral(num as i32)
+                    },
                     line: self.line,
                     column: start_col,
                 }
             }
-            _ => {
-                Token {
-                    kind: TokenKind::Invalid(ch),
-                    line: self.line,
-                    column: start_col,
-                }
-            }
+            _ => Token {
+                kind: TokenKind::Invalid(ch),
+                line: self.line,
+                column: start_col,
+            },
         }
     }
 
@@ -759,8 +761,10 @@ mod tests {
 
     #[test]
     fn test_multiline_string() {
-        let tokens = tokenize(r#""""multi
-line""""#);
+        let tokens = tokenize(
+            r#""""multi
+line""""#,
+        );
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(kinds.len(), 1);
         match &kinds[0] {
@@ -788,14 +792,28 @@ line""""#);
     fn test_newline_tokens() {
         let tokens = tokenize("x\ny\n");
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
-        assert_eq!(kinds, vec![TokenKind::Identifier("x".to_string()), TokenKind::Newline, TokenKind::Identifier("y".to_string()), TokenKind::Newline]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Identifier("x".to_string()),
+                TokenKind::Newline,
+                TokenKind::Identifier("y".to_string()),
+                TokenKind::Newline
+            ]
+        );
     }
 
     #[test]
     fn test_comments() {
         let tokens = tokenize("x // this is a comment\ny");
         let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
-        assert_eq!(kinds, vec![TokenKind::Identifier("x".to_string()), TokenKind::Identifier("y".to_string())]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Identifier("x".to_string()),
+                TokenKind::Identifier("y".to_string())
+            ]
+        );
     }
 
     #[test]

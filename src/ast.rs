@@ -157,9 +157,13 @@ impl Expr {
             Expr::AssignIndex { index, .. } => index.span(),
             Expr::FieldAccess { target, .. } => target.span(),
             Expr::FieldAssign { target, .. } => target.span(),
-            Expr::StructLiteral { fields, .. } => fields.first().map_or(SourceSpan::unknown(), |(_, e)| e.span()),
+            Expr::StructLiteral { fields, .. } => fields
+                .first()
+                .map_or(SourceSpan::unknown(), |(_, e)| e.span()),
             Expr::TupleAccess { target, .. } => target.span(),
-            Expr::EnumLiteral { args, .. } => args.first().map_or(SourceSpan::unknown(), |e| e.span()),
+            Expr::EnumLiteral { args, .. } => {
+                args.first().map_or(SourceSpan::unknown(), |e| e.span())
+            }
             Expr::Call { args, .. } => args.first().map_or(SourceSpan::unknown(), |e| e.span()),
             Expr::Let { value, .. } => value.span(),
             Expr::Assign { value, .. } => value.span(),
@@ -182,10 +186,7 @@ pub struct MatchArm {
 #[derive(Debug, Clone)]
 pub enum MatchPattern {
     Int(i32),
-    Variant {
-        name: String,
-        bindings: Vec<String>,
-    },
+    Variant { name: String, bindings: Vec<String> },
     Wildcard,
 }
 
