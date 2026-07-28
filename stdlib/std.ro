@@ -12,7 +12,7 @@ fn len(value):
     return __rt_strlen(value)
 
 fn read_file(path):
-    return __rt_read_file(path)
+    return __rt_wrap_string(__rt_read_file(path))
 
 fn write_file(path, contents):
     return __rt_write_file(path, contents)
@@ -34,22 +34,22 @@ fn ends_with(s, suffix):
     return __rt_ends_with(s, suffix)
 
 fn substr(s, start, length):
-    return __rt_substr(s, start, length)
+    return __rt_wrap_string(__rt_substr(s, start, length))
 
 fn trim(s):
-    return __rt_trim(s)
+    return __rt_wrap_string(__rt_trim(s))
 
 fn to_uppercase(s):
-    return __rt_to_uppercase(s)
+    return __rt_wrap_string(__rt_to_uppercase(s))
 
 fn to_lowercase(s):
-    return __rt_to_lowercase(s)
+    return __rt_wrap_string(__rt_to_lowercase(s))
 
 fn to_string(v):
     return v
 
 fn str_repeat(s, count):
-    return __rt_str_repeat(s, count)
+    return __rt_wrap_string(__rt_str_repeat(s, count))
 
 // Parsing
 fn to_int(s):
@@ -59,7 +59,7 @@ fn to_float(s):
     return __rt_to_float(s)
 
 fn to_hex(n):
-    return __rt_to_hex(n)
+    return __rt_wrap_string(__rt_to_hex(n))
 
 // Math methods (receiver.method syntax)
 fn abs(n):
@@ -107,7 +107,7 @@ fn pow(base, exp):
 
 // I/O
 fn read_line():
-    return __rt_read_line()
+    return __rt_wrap_string(__rt_read_line())
 
 fn read_int():
     return to_int(read_line())

@@ -43,6 +43,14 @@ pub enum Type {
     I32,
     F64,
     Ptr,
+    String,
+    Bool,
+    Struct(String),
+    Enum(String),
+    Tuple(Vec<Type>),
+    Void,
+    Unknown,
+    Generic(String),
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +68,13 @@ impl Val {
             Val::Reg(r) => format!("%{}", r),
         }
     }
+    fn as_float_str(&self) -> String {
+        match self {
+            Val::ImmFloat(n) => n.to_string(),
+            Val::Imm(n) => n.to_string(),
+            Val::Reg(r) => format!("%{}", r),
+        }
+    }
 }
 
 pub struct LLVMTextGen {
@@ -72,6 +87,7 @@ pub struct LLVMTextGen {
     function_aliases: HashMap<String, String>,
     stdlib_enabled: bool,
     runtime_helpers_emitted: bool,
+    monomorphized: HashMap<String, FunctionDef>,
 
     current_function: Option<String>,
     loop_label_stack: Vec<(String, String)>,
@@ -93,6 +109,7 @@ impl LLVMTextGen {
             function_aliases: HashMap::new(),
             stdlib_enabled: false,
             runtime_helpers_emitted: false,
+            monomorphized: HashMap::new(),
             current_function: None,
             loop_label_stack: Vec::new(),
             flattened_funcs: Vec::new(),
@@ -754,6 +771,9 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
     }
 
     fn generate_function(&mut self, func: &FunctionDef) -> CompileResult<()> {
+        if !func.generic_params.is_empty() {
+            return Ok(());
+        }
         self.current_function = Some(func.name.clone());
         self.block_count = 0;
 
@@ -770,6 +790,7 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                         Type::I32 => "i32",
                         Type::F64 => "double",
                         Type::Ptr => "i8*",
+                        _ => "i8*",
                     }
                 };
                 format!("{} %arg{}", type_str, i)
@@ -814,6 +835,14 @@ ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
                     // For pointer params, arg[i] is already a pointer value, store it
                     writeln!(&mut self.functions, "  %{} = alloca i8*", alloca_name).unwrap();
                     writeln!(&mut self.functions, "  store i8* %arg{}, i8** %{}", i, alloca_name).unwrap();
+                }
+                _ => {
+                    writeln!(&mut self.functions, "  %{} = alloca i8*", alloca_name).unwrap();
+                    writeln!(&mut self.functions, "  store i8* %arg{}, i8** %{}", i, alloca_name).unwrap();
+                }
+                _ => {
+                    // fallback for unsupported types
+                    // handled as pointer
                 }
             }
             locals.insert(param.clone(), (param_type, alloca_name, false));
@@ -944,6 +973,7 @@ writeln!(
                         Type::I32 => "i32",
                         Type::F64 => "double",
                         Type::Ptr => "i8*",
+                        _ => "i8*",
                     }
                 } else if params.contains(&name) {
                     if let Some((typ, _, _)) = locals.get(name) {
@@ -951,6 +981,7 @@ writeln!(
                             Type::I32 => "i32",
                             Type::F64 => "double",
                             Type::Ptr => "i8*",
+                            _ => "i8*",
                         }
                     } else {
                         "void"
@@ -1187,6 +1218,184 @@ writeln!(
         self.best_suggestion(name, candidates.iter().map(|s| s.as_str()))
     }
 
+    fn find_function_def(&self, name: &str) -> Option<&FunctionDef> {
+        self.flattened_funcs.iter().find(|f| f.name == name)
+    }
+
+    fn type_to_mangled_suffix(typ: &Type) -> String {
+        match typ {
+            Type::I32 => "i32".to_string(),
+            Type::F64 => "f64".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::String => "str".to_string(),
+            Type::Ptr => "ptr".to_string(),
+            Type::Struct(name) => format!("struct_{}", name),
+            Type::Enum(name) => format!("enum_{}", name),
+            Type::Tuple(types) => {
+                let inner = types.iter().map(|t| Self::type_to_mangled_suffix(t)).collect::<Vec<_>>().join("_");
+                format!("tuple_{}", inner)
+            }
+            Type::Void => "void".to_string(),
+            Type::Unknown => "unknown".to_string(),
+            Type::Generic(name) => format!("generic_{}", name),
+            _ => "i8*".to_string(),
+        }
+    }
+
+    fn monomorphize_function(&mut self, func: &FunctionDef, concrete_types: &[Type]) -> CompileResult<String> {
+        if concrete_types.len() != func.generic_params.len() {
+            return Err(CompileError::new(format!(
+                "generic function {} expects {} type parameters, got {}",
+                func.name,
+                func.generic_params.len(),
+                concrete_types.len()
+            )));
+        }
+
+        let mut type_map: HashMap<String, Type> = HashMap::new();
+        for (param, typ) in func.generic_params.iter().zip(concrete_types.iter()) {
+            type_map.insert(param.clone(), typ.clone());
+        }
+
+        let suffix = concrete_types.iter().map(|t| Self::type_to_mangled_suffix(t)).collect::<Vec<_>>().join("_");
+        let mangled_name = format!("{}_{}", func.name, suffix);
+
+        if self.monomorphized.contains_key(&mangled_name) {
+            return Ok(mangled_name);
+        }
+
+        let mut monomorphized = func.clone();
+        monomorphized.name = mangled_name.clone();
+        monomorphized.generic_params.clear();
+
+        for param_type in &mut monomorphized.param_types {
+            if let Some(t) = param_type {
+                *param_type = Some(self.substitute_generic_types(t, &type_map));
+            }
+        }
+        if let Some(ref mut rt) = monomorphized.return_type {
+            *rt = self.substitute_generic_types(rt, &type_map);
+        }
+
+        let mut new_body = Vec::new();
+        for expr in &monomorphized.body {
+            new_body.push(self.substitute_expr_generics(expr, &type_map)?);
+        }
+        monomorphized.body = new_body;
+
+        self.monomorphized.insert(mangled_name.clone(), monomorphized);
+        Ok(mangled_name)
+    }
+
+    fn substitute_generic_types(&self, s: &str, type_map: &HashMap<String, Type>) -> String {
+        if let Some(typ) = type_map.get(s) {
+            match typ {
+                Type::I32 => "i32".to_string(),
+                Type::F64 => "f64".to_string(),
+                Type::Bool => "bool".to_string(),
+                Type::String => "str".to_string(),
+                Type::Ptr => "ptr".to_string(),
+                Type::Struct(name) => name.clone(),
+                Type::Enum(name) => name.clone(),
+                Type::Generic(_) => s.to_string(),
+                _ => s.to_string(),
+            }
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn substitute_expr_generics(&mut self, expr: &Expr, type_map: &HashMap<String, Type>) -> CompileResult<Expr> {
+        match expr {
+            Expr::Call { func, args } => {
+                let mut new_args = Vec::new();
+                for arg in args {
+                    new_args.push(self.substitute_expr_generics(arg, type_map)?);
+                }
+                Ok(Expr::Call { func: func.clone(), args: new_args })
+            }
+            Expr::Binary(l, op, r, span) => {
+                Ok(Expr::Binary(
+                    Box::new(self.substitute_expr_generics(l, type_map)?),
+                    op.clone(),
+                    Box::new(self.substitute_expr_generics(r, type_map)?),
+                    span.clone(),
+                ))
+            }
+            Expr::Unary(op, inner, span) => {
+                Ok(Expr::Unary(op.clone(), Box::new(self.substitute_expr_generics(inner, type_map)?), span.clone()))
+            }
+            Expr::Return(inner, span) => {
+                Ok(Expr::Return(Box::new(self.substitute_expr_generics(inner, type_map)?), *span))
+            }
+            Expr::Let { name, typ, value, is_const } => {
+                let new_typ = typ.as_ref().map(|t| self.substitute_generic_types(t, type_map));
+                Ok(Expr::Let {
+                    name: name.clone(),
+                    typ: new_typ,
+                    value: Box::new(self.substitute_expr_generics(value, type_map)?),
+                    is_const: *is_const,
+                })
+            }
+            Expr::Assign { name, value } => {
+                Ok(Expr::Assign {
+                    name: name.clone(),
+                    value: Box::new(self.substitute_expr_generics(value, type_map)?),
+                })
+            }
+            Expr::If { condition, then_branch, else_branch } => {
+                let new_then = then_branch.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+                let new_else = else_branch.as_ref().map(|b| {
+                    let stmts = b.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+                    Ok(Box::new(Block { stmts }))
+                }).transpose()?;
+                Ok(Expr::If {
+                    condition: Box::new(self.substitute_expr_generics(condition, type_map)?),
+                    then_branch: Box::new(Block { stmts: new_then }),
+                    else_branch: new_else,
+                })
+            }
+            Expr::While { condition, body } => {
+                let new_body = body.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+                Ok(Expr::While {
+                    condition: Box::new(self.substitute_expr_generics(condition, type_map)?),
+                    body: Box::new(Block { stmts: new_body }),
+                })
+            }
+            Expr::For { variable, iterable, body } => {
+                let new_body = body.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+                Ok(Expr::For {
+                    variable: variable.clone(),
+                    iterable: Box::new(self.substitute_expr_generics(iterable, type_map)?),
+                    body: Box::new(Block { stmts: new_body }),
+                })
+            }
+            Expr::ForRange { variable, start, end, body } => {
+                let new_body = body.stmts.iter().map(|e| self.substitute_expr_generics(e, type_map)).collect::<CompileResult<Vec<_>>>()?;
+                Ok(Expr::ForRange {
+                    variable: variable.clone(),
+                    start: Box::new(self.substitute_expr_generics(start, type_map)?),
+                    end: Box::new(self.substitute_expr_generics(end, type_map)?),
+                    body: Box::new(Block { stmts: new_body }),
+                })
+            }
+            Expr::Match { expr, arms } => {
+                let new_arms = arms.iter().map(|arm| {
+                    let new_body = self.substitute_expr_generics(&arm.body, type_map)?;
+                    Ok(MatchArm {
+                        pattern: arm.pattern.clone(),
+                        body: Box::new(new_body),
+                    })
+                }).collect::<CompileResult<Vec<_>>>()?;
+                Ok(Expr::Match {
+                    expr: Box::new(self.substitute_expr_generics(expr, type_map)?),
+                    arms: new_arms,
+                })
+            }
+            _ => Ok(expr.clone()),
+        }
+    }
+
     fn stdlib_hint(&self, func: &str) -> &'static str {
         match func {
             "print" | "len" | "read_file" | "write_file" | "exit" => {
@@ -1246,6 +1455,7 @@ writeln!(
                             Type::I32 => "i32",
                             Type::F64 => "double",
                             Type::Ptr => "i8*",
+                            _ => "i8*",
                         }
                     };
                     types.push(param_type);
@@ -1365,7 +1575,7 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                             if let Expr::Identifier(n, _) = arg {
                                 if n == param {
                                     if let Some(expected) = pt(func, i) {
-                                        if expected == "i8*" {
+                                        if expected == "i8*" || expected == "%String*" {
                                             return true;
                                         }
                                     } else if func.starts_with("__rt_") {
@@ -1373,6 +1583,10 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                                     } else if stdlib_enabled && matches!(func.as_str(), "print" | "len" | "read_file" | "write_file" | "is_empty") {
                                         return true;
                                     }
+                                }
+                            } else if let Expr::Call { .. } = arg {
+                                if check_expr(arg, param, stdlib_enabled, visited, pt) {
+                                    return true;
                                 }
                             }
                         }
@@ -1412,6 +1626,10 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                                     }
                                 }
                             }
+                        } else if let Expr::Call { .. } = arg {
+                            if check_int_context(arg, param, pt) {
+                                return true;
+                            }
                         }
                     }
                     false
@@ -1436,6 +1654,10 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                                         return true;
                                     }
                                 }
+                            }
+                        } else if let Expr::Call { .. } = arg {
+                            if check_float_context(arg, param, pt) {
+                                return true;
                             }
                         }
                     }
@@ -1588,6 +1810,10 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                         .unwrap();
                         locals.insert(name.clone(), (Type::Ptr, alloca.clone(), *is_const));
                     }
+                    _ => {
+                        // fallback for unsupported types
+                        // handled as pointer
+                    }
                 }
             }
 
@@ -1636,6 +1862,10 @@ fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) 
                             ptr, alloca
                         )
                         .unwrap();
+                    }
+                    _ => {
+                        // fallback for unsupported types
+                        // handled as pointer
                     }
                 }
             }
@@ -2326,6 +2556,10 @@ Expr::Return(inner, _) => {
                                 .unwrap();
                                 args.push(format!("i8* %{}", loaded));
                             }
+                            _ => {
+                                // fallback for unsupported types
+                                // handled as pointer
+                            }
                         }
                     } else if let Some(idx) = params.iter().position(|p| p == name) {
                         parts.push("%s".to_string());
@@ -2431,6 +2665,12 @@ Expr::Return(inner, _) => {
                             )
                             .unwrap();
                             Ok(Val::Reg(res))
+                        }
+                        _ => {
+                            return Err(CompileError::new(format!(
+                                "unsupported type in numeric context for variable '{}'",
+                                name
+                            )));
                         }
                     };
                 }
@@ -2760,11 +3000,81 @@ Expr::Return(inner, _) => {
                 let ptr = self.next_temp();
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let idx = self.generate_int_expr(index, params, locals)?;
+                // Bounds check: load length from header (offset 4)
+                let len_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 4",
+                    len_ptr, ptr
+                ).unwrap();
+                let len_i32 = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    len_i32, len_ptr
+                ).unwrap();
+                let list_len = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    list_len, len_i32
+                ).unwrap();
+                let oob = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp uge i32 {}, %{}",
+                    oob, idx.as_str(), list_len
+                ).unwrap();
+                let panic_label = self.next_block_label("index_oob");
+                let cont_label = self.next_block_label("index_cont");
+                writeln!(
+                    &mut self.functions,
+                    "  br i1 %{}, label %{}, label %{}",
+                    oob, panic_label, cont_label
+                ).unwrap();
+                writeln!(&mut self.functions, "{}:", panic_label).unwrap();
+                let bounds_msg = self.emit_string_const("list index out of bounds");
+                let bounds_msg_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr [23 x i8], [23 x i8]* @{}, i32 0, i32 0",
+                    bounds_msg_ptr, bounds_msg
+                ).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  call void @__rt_panic_bounds(i8* %{})",
+                    bounds_msg_ptr
+                )
+                .unwrap();
+                writeln!(&mut self.functions, "  unreachable").unwrap();
+                writeln!(&mut self.functions, "{}:", cont_label).unwrap();
+                let elem_type = match target.as_ref() {
+                    Expr::List(items) if !items.is_empty() => {
+                        self.infer_expr_type(&items[0], params, locals)
+                    }
+                    Expr::Identifier(name, _) => {
+                        if let Some((typ, _, _)) = locals.get(name) {
+                            match typ {
+                                Type::I32 => "i32",
+                                Type::F64 => "double",
+                                Type::Ptr => "i8*",
+                                _ => "i32",
+                            }
+                        } else {
+                            "i32"
+                        }
+                    }
+                    _ => "i32",
+                };
+                let elem_size: i32 = match elem_type {
+                    "double" => 8,
+                    _ => 4,
+                };
                 let elem_off = self.next_temp();
                 writeln!(
                     &mut self.functions,
-                    "  %{} = mul i32 {}, 4",
-                    elem_off, idx.as_str()
+                    "  %{} = mul i32 {}, {}",
+                    elem_off, idx.as_str(), elem_size
                 ).unwrap();
                 let offset = self.next_temp();
                 writeln!(
@@ -2778,19 +3088,38 @@ Expr::Return(inner, _) => {
                     "  %{} = getelementptr i8, i8* %{}, i32 %{}",
                     elem_ptr, ptr, offset
                 ).unwrap();
-                let i32_ptr = self.next_temp();
-                writeln!(
-                    &mut self.functions,
-                    "  %{} = bitcast i8* %{} to i32*",
-                    i32_ptr, elem_ptr
-                ).unwrap();
-                let loaded = self.next_temp();
-                writeln!(
-                    &mut self.functions,
-                    "  %{} = load i32, i32* %{}",
-                    loaded, i32_ptr
-                ).unwrap();
-                Ok(Val::Reg(loaded))
+                match elem_type {
+                    "double" => {
+                        let double_ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %{} to double*",
+                            double_ptr, elem_ptr
+                        ).unwrap();
+                        let loaded = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load double, double* %{}",
+                            loaded, double_ptr
+                        ).unwrap();
+                        Ok(Val::Reg(loaded))
+                    }
+                    _ => {
+                        let i32_ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %{} to i32*",
+                            i32_ptr, elem_ptr
+                        ).unwrap();
+                        let loaded = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load i32, i32* %{}",
+                            loaded, i32_ptr
+                        ).unwrap();
+                        Ok(Val::Reg(loaded))
+                    }
+                }
             }
             Expr::FieldAccess { target, field } => {
                 let struct_defs = self.struct_defs.clone();
@@ -2885,6 +3214,12 @@ Expr::Return(inner, _) => {
                             Ok(Val::Reg(converted))
                         }
                         Type::Ptr => Err(CompileError::new(format!("variable '{}' is a string, cannot convert to float", name))),
+                        _ => {
+                            return Err(CompileError::new(format!(
+                                "unsupported type in float context for variable '{}'",
+                                name
+                            )));
+                        }
                     };
                 }
                 Err(CompileError::new(format!("variable '{}' is not a float", name)))
@@ -3159,7 +3494,16 @@ Expr::Return(inner, _) => {
         match expr {
             Expr::List(items) => {
                 let count = items.len() as i32;
-                let alloc_size = (8 + count * 4) as i64;
+                let elem_type = if items.is_empty() {
+                    "i32"
+                } else {
+                    self.infer_expr_type(&items[0], params, locals)
+                };
+                let elem_size: i32 = match elem_type {
+                    "double" => 8,
+                    _ => 4,
+                };
+                let alloc_size = (8 + count * elem_size) as i64;
                 let malloc_reg = self.next_temp();
                 writeln!(
                     &mut self.functions,
@@ -3177,24 +3521,45 @@ Expr::Return(inner, _) => {
                 writeln!(&mut self.functions, "  store i32 {}, i32* %{}", count, len_ptr_i32).unwrap();
                 // Store elements at offset 8
                 for (i, item) in items.iter().enumerate() {
-                    let val = self.generate_int_expr(item, params, locals)?;
+                    let val = match elem_type {
+                        "double" => self.generate_float_expr(item, params, locals)?,
+                        _ => self.generate_int_expr(item, params, locals)?,
+                    };
+                    let elem_off = (i as i32) * elem_size;
                     let ptr_reg = self.next_temp();
                     writeln!(
                         &mut self.functions,
                         "  %{} = getelementptr i8, i8* %{}, i32 {}",
-                        ptr_reg, malloc_reg, (8 + i * 4)
+                        ptr_reg, malloc_reg, (8 + elem_off)
                     ).unwrap();
-                    let i32_ptr = self.next_temp();
-                    writeln!(
-                        &mut self.functions,
-                        "  %{} = bitcast i8* %{} to i32*",
-                        i32_ptr, ptr_reg
-                    ).unwrap();
-                    writeln!(
-                        &mut self.functions,
-                        "  store i32 {}, i32* %{}",
-                        val.as_str(), i32_ptr
-                    ).unwrap();
+                    match elem_type {
+                        "double" => {
+                            let double_ptr = self.next_temp();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = bitcast i8* %{} to double*",
+                                double_ptr, ptr_reg
+                            ).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  store double {}, double* %{}",
+                                val.as_float_str(), double_ptr
+                            ).unwrap();
+                        }
+                        _ => {
+                            let i32_ptr = self.next_temp();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = bitcast i8* %{} to i32*",
+                                i32_ptr, ptr_reg
+                            ).unwrap();
+                            writeln!(
+                                &mut self.functions,
+                                "  store i32 {}, i32* %{}",
+                                val.as_str(), i32_ptr
+                            ).unwrap();
+                        }
+                    }
                 }
                 writeln!(&mut self.functions, "  %{} = bitcast i8* %{} to i8*", result, malloc_reg).unwrap();
             }
@@ -3586,6 +3951,26 @@ Expr::Return(inner, _) => {
                 CompileError::new(format!("unknown function: {}{}", func, suggestion))
             })?;
 
+        let mut call_resolved = resolved.clone();
+        if let Some(func_def) = self.find_function_def(&resolved) {
+            if !func_def.generic_params.is_empty() {
+                let mut concrete_types = Vec::new();
+                for (i, arg) in args.iter().enumerate() {
+                    let arg_type = self.infer_expr_type(arg, params, locals);
+                    let concrete = match arg_type {
+                        "i32" => Type::I32,
+                        "double" => Type::F64,
+                        "i8*" => Type::Ptr,
+                        "%String*" => Type::String,
+                        _ => Type::Unknown,
+                    };
+                    concrete_types.push(concrete);
+                }
+                let mangled = self.monomorphize_function(&func_def.clone(), &concrete_types)?;
+                call_resolved = mangled;
+            }
+        }
+
         let param_types = self.get_function_param_types(func);
         let mut call_args = Vec::new();
         for (i, arg) in args.iter().enumerate() {
@@ -3612,7 +3997,7 @@ Expr::Return(inner, _) => {
             writeln!(
                 &mut self.functions,
                 "  call void @{}({})",
-                resolved,
+                call_resolved,
                 call_args.join(", ")
             )
             .unwrap();
@@ -3624,7 +4009,7 @@ Expr::Return(inner, _) => {
                 "  %{} = call {} @{}({})",
                 result,
                 ret_ty,
-                resolved,
+                call_resolved,
                 call_args.join(", ")
             )
             .unwrap();
@@ -3644,6 +4029,7 @@ Expr::Return(inner, _) => {
                 Type::I32 => "i32",
                 Type::F64 => "double",
                 Type::Ptr => "i8*",
+                _ => "i8*",
             };
             writeln!(
                 &mut self.functions,
@@ -4003,6 +4389,19 @@ Expr::Return(inner, _) => {
         writeln!(&mut helpers, "  ret void").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
+        // Bounds check panic
+        let bounds_msg = self.emit_string_const("list index out of bounds");
+        writeln!(
+            &mut helpers,
+            "define void @__rt_panic_bounds(i8* %msg) {{"
+        )
+        .unwrap();
+        writeln!(&mut helpers, "entry:").unwrap();
+        writeln!(&mut helpers, "  call void @__rt_print_str(i8* %msg)").unwrap();
+        writeln!(&mut helpers, "  call void @__rt_exit(i32 1)").unwrap();
+        writeln!(&mut helpers, "  unreachable").unwrap();
+        writeln!(&mut helpers, "}}\n").unwrap();
+
         // List runtime helpers
         writeln!(&mut helpers, "define i32 @__rt_list_len(i8* %list) {{").unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
@@ -4183,6 +4582,10 @@ Expr::Return(inner, _) => {
                         Type::Ptr => {
                             constraints.push_str("=r");
                             operands.push_str(&format!("i8** %{}", alloca));
+                        }
+                        _ => {
+                            // fallback for unsupported types
+                            // handled as pointer
                         }
                     }
                 } else if let Some(idx) = params.iter().position(|p| p == name) {

@@ -31,7 +31,7 @@ pub enum UnaryOp {
     Not,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SourceSpan {
     pub line: usize,
     pub column: usize,
@@ -204,6 +204,7 @@ pub struct EnumDef {
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub params: Vec<String>,
     pub param_types: Vec<Option<String>>,
     pub return_type: Option<String>,
@@ -224,6 +225,7 @@ pub struct StructField {
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub fields: Vec<StructField>,
 }
 

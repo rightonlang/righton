@@ -1,28 +1,49 @@
 use crate::ast::*;
+use crate::diagnostics::Diagnostic;
 use crate::lexer::{Lexer, TokenKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     pub message: String,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl ParseError {
     fn with_location(message: impl Into<String>, line: usize, column: usize) -> Self {
         Self {
-            message: format!("{} (line={}, col={})", message.into(), line, column),
+            message: message.into(),
+            line,
+            column,
         }
     }
 
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            line: 0,
+            column: 0,
         }
+    }
+
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let span = if self.line > 0 {
+            SourceSpan::new(self.line, self.column)
+        } else {
+            SourceSpan::unknown()
+        };
+        Diagnostic::error(Some("E0001"), self.message.clone())
+            .with_span(span)
     }
 }
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        if self.line > 0 {
+            write!(f, "{} (line={}, col={})", self.message, self.line, self.column)
+        } else {
+            write!(f, "{}", self.message)
+        }
     }
 }
 
@@ -503,6 +524,12 @@ impl<'a> Parser<'a> {
             return Err(ParseError::new("expected name of the function"));
         };
 
+        let generic_params = if self.current == Some(TokenKind::Less) {
+            self.parse_generic_params()?
+        } else {
+            Vec::new()
+        };
+
         self.eat(TokenKind::LParen)?;
         let mut params = Vec::new();
         let mut param_types = Vec::new();
@@ -536,6 +563,7 @@ impl<'a> Parser<'a> {
 
         Ok(FunctionDef {
             name,
+            generic_params,
             params,
             param_types,
             return_type,
@@ -552,6 +580,12 @@ impl<'a> Parser<'a> {
             n
         } else {
             return Err(ParseError::new("expected name of the external function"));
+        };
+
+        let generic_params = if self.current == Some(TokenKind::Less) {
+            self.parse_generic_params()?
+        } else {
+            Vec::new()
         };
 
         self.eat(TokenKind::LParen)?;
@@ -584,6 +618,7 @@ impl<'a> Parser<'a> {
 
         Ok(FunctionDef {
             name,
+            generic_params,
             params,
             param_types,
             return_type,
@@ -596,7 +631,23 @@ impl<'a> Parser<'a> {
             Some(TokenKind::Identifier(s)) => {
                 let type_name = s;
                 self.advance();
-                Ok(type_name)
+                if self.current == Some(TokenKind::LBracket) {
+                    self.advance();
+                    let mut args = Vec::new();
+                    while let Some(TokenKind::Identifier(arg)) = self.current.clone() {
+                        args.push(arg);
+                        self.advance();
+                        if self.current == Some(TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.eat(TokenKind::RBracket)?;
+                    Ok(format!("{}[{}]", type_name, args.join(", ")))
+                } else {
+                    Ok(type_name)
+                }
             }
             Some(tok) => Err(ParseError::new(format!(
                 "expected type annotation but found {:?} (line={}, col={})",
@@ -608,6 +659,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_generic_params(&mut self) -> Result<Vec<String>, ParseError> {
+        self.eat(TokenKind::Less)?;
+        let mut params = Vec::new();
+        while let Some(TokenKind::Identifier(p)) = self.current.clone() {
+            params.push(p);
+            self.advance();
+            if self.current == Some(TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.eat(TokenKind::Greater)?;
+        Ok(params)
+    }
+
     fn parse_struct_def(&mut self) -> Result<StructDef, ParseError> {
         self.advance(); // consume 'struct'
         let name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
@@ -616,6 +683,13 @@ impl<'a> Parser<'a> {
         } else {
             return Err(ParseError::new("expected name of the struct"));
         };
+
+        let generic_params = if self.current == Some(TokenKind::Less) {
+            self.parse_generic_params()?
+        } else {
+            Vec::new()
+        };
+
         self.eat(TokenKind::Colon)?;
         let block = self.parse_block()?;
         let mut fields = Vec::new();
@@ -625,7 +699,7 @@ impl<'a> Parser<'a> {
                 fields.push(StructField { name, typ: field_type });
             }
         }
-        Ok(StructDef { name, fields })
+        Ok(StructDef { name, generic_params, fields })
     }
 
     fn parse_enum_def(&mut self) -> Result<EnumDef, ParseError> {

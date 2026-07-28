@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::diagnostics::Diagnostic;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +12,10 @@ impl BorrowCheckError {
         Self {
             message: message.into(),
         }
+    }
+
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        Diagnostic::error(Some("E0003"), self.message.clone())
     }
 }
 
