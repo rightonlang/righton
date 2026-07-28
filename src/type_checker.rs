@@ -43,7 +43,6 @@ impl std::str::FromStr for Type {
 }
 
 impl Type {
-
     pub fn to_llvm(&self) -> &'static str {
         match self {
             Type::I32 => "i32",
@@ -683,7 +682,7 @@ impl TypeChecker {
                                     )));
                                 }
                                 for (i, binding) in bindings.iter().enumerate() {
-                                     let field_type = Type::from_str(&v.fields[i]).unwrap();
+                                    let field_type = Type::from_str(&v.fields[i]).unwrap();
                                     self.env.insert_local(binding.clone(), field_type);
                                 }
                             } else {
@@ -716,7 +715,7 @@ impl TypeChecker {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
                         && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field)
                     {
-                         return Ok(Type::from_str(&sf.typ).unwrap());
+                        return Ok(Type::from_str(&sf.typ).unwrap());
                     }
                     return Err(TypeError::new(format!("unknown field: {}", field)));
                 }
@@ -733,7 +732,7 @@ impl TypeChecker {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
                         && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field)
                     {
-                             let expected = Type::from_str(&sf.typ).unwrap();
+                        let expected = Type::from_str(&sf.typ).unwrap();
                         if !self.types_compatible(&value_type, &expected) {
                             return Err(TypeError::new(format!(
                                 "cannot assign {} to field {} of type {}",
