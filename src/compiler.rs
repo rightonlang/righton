@@ -1043,7 +1043,9 @@ impl LLVMTextGen {
             Expr::Literal(Literal::Float(_), _) => "double",
             Expr::Literal(Literal::Bool(_), _) => "i32",
             Expr::Literal(Literal::Str(_), _) => "%String*",
-            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => "%String*",
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => {
+                "%String*"
+            }
             Expr::Borrow { .. } => "%String*",
             Expr::List(_) => "i8*",
             Expr::StructLiteral { .. } => "i8*",
@@ -1758,24 +1760,14 @@ impl LLVMTextGen {
                     str_ptr, str_ptr
                 )
                 .unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  store i32 0, i32* %{}.len",
-                    str_ptr
-                )
-                .unwrap();
+                writeln!(&mut self.functions, "  store i32 0, i32* %{}.len", str_ptr).unwrap();
                 writeln!(
                     &mut self.functions,
                     "  %{}.cap = getelementptr %String, %String* %{}, i32 0, i32 2",
                     str_ptr, str_ptr
                 )
                 .unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  store i32 1, i32* %{}.cap",
-                    str_ptr
-                )
-                .unwrap();
+                writeln!(&mut self.functions, "  store i32 1, i32* %{}.cap", str_ptr).unwrap();
                 writeln!(
                     &mut self.functions,
                     "  %{} = bitcast %String* %{} to %String*",
@@ -5347,12 +5339,7 @@ impl LLVMTextGen {
                 )
                 .unwrap();
                 let cap = self.next_temp();
-                writeln!(
-                    &mut self.functions,
-                    "  %{} = add i32 %{}, 1",
-                    cap, len
-                )
-                .unwrap();
+                writeln!(&mut self.functions, "  %{} = add i32 %{}, 1", cap, len).unwrap();
                 writeln!(&mut self.functions, "  %{} = alloca %String", result).unwrap();
                 writeln!(
                     &mut self.functions,
@@ -6530,11 +6517,7 @@ impl LLVMTextGen {
         writeln!(&mut helpers, "  ret void").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
-        writeln!(
-            &mut helpers,
-            "define %String* @__rt_wrap_string(i8* %s) {{"
-        )
-        .unwrap();
+        writeln!(&mut helpers, "define %String* @__rt_wrap_string(i8* %s) {{").unwrap();
         writeln!(&mut helpers, "entry:").unwrap();
         writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
         writeln!(&mut helpers, "  %len32 = trunc i64 %len to i32").unwrap();
@@ -6544,39 +6527,23 @@ impl LLVMTextGen {
             "  %ptr_gep = getelementptr i8, i8* %str, i32 0"
         )
         .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %ptr_field = bitcast i8* %ptr_gep to i8**"
-        )
-        .unwrap();
+        writeln!(&mut helpers, "  %ptr_field = bitcast i8* %ptr_gep to i8**").unwrap();
         writeln!(&mut helpers, "  store i8* %s, i8** %ptr_field").unwrap();
         writeln!(
             &mut helpers,
             "  %len_gep = getelementptr i8, i8* %str, i32 4"
         )
         .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %len_field = bitcast i8* %len_gep to i32*"
-        )
-        .unwrap();
+        writeln!(&mut helpers, "  %len_field = bitcast i8* %len_gep to i32*").unwrap();
         writeln!(&mut helpers, "  store i32 %len32, i32* %len_field").unwrap();
         writeln!(
             &mut helpers,
             "  %cap_gep = getelementptr i8, i8* %str, i32 8"
         )
         .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %cap_field = bitcast i8* %cap_gep to i32*"
-        )
-        .unwrap();
+        writeln!(&mut helpers, "  %cap_field = bitcast i8* %cap_gep to i32*").unwrap();
         writeln!(&mut helpers, "  store i32 %len32, i32* %cap_field").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %result = bitcast i8* %str to %String*"
-        )
-        .unwrap();
+        writeln!(&mut helpers, "  %result = bitcast i8* %str to %String*").unwrap();
         writeln!(&mut helpers, "  ret %String* %result").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
