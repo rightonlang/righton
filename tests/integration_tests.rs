@@ -1735,6 +1735,120 @@ mod tests {
         let _ = fs::remove_file(output);
     }
 
+    #[test]
+    fn test_string_literal_uses_string_struct() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(&input, "fn main():\n    let s = \"hello\"\n    return 0").unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(
+            result.status.success(),
+            "string literal failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("%String = type { i8*, i32, i32 }"));
+        assert!(ir.contains("alloca %String"));
+        assert!(ir.contains("getelementptr %String, %String*"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_string_concat_uses_string_struct() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let s = \"hello\"\n    let t = s + \" world\"\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(
+            result.status.success(),
+            "string concat failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("%String = type { i8*, i32, i32 }"));
+        assert!(ir.contains("alloca %String"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_fstring_uses_string_struct() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "import std\nfn main():\n    let name = \"Alice\"\n    let greeting = f\"Hello {name}\"\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("%String = type { i8*, i32, i32 }"));
+        assert!(ir.contains("alloca %String"));
+        assert!(ir.contains("sprintf"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_wrap_string_helper_exists() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "import std\nfn main():\n    let s = str_repeat(\"ab\", 3)\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(
+            result.status.success(),
+            "str_repeat failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("define %String* @__rt_wrap_string"));
+        assert!(ir.contains("call %String* @__rt_wrap_string"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
     // ========================
     // CONST TESTS
     // ========================
