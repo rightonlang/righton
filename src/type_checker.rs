@@ -159,6 +159,7 @@ struct TypeEnv {
     enums: Vec<crate::ast::EnumDef>,
     type_aliases: HashMap<String, String>,
     generics: HashMap<String, Type>,
+    generic_functions: HashMap<String, (Vec<String>, Option<String>)>,
 }
 
 impl TypeEnv {
@@ -172,6 +173,7 @@ impl TypeEnv {
             enums: Vec::new(),
             type_aliases: HashMap::new(),
             generics: HashMap::new(),
+            generic_functions: HashMap::new(),
         }
     }
 
@@ -205,13 +207,32 @@ impl TypeEnv {
         self.functions.insert(name, typ);
     }
 
+    fn insert_generic_function(
+        &mut self,
+        name: String,
+        generic_params: Vec<String>,
+        return_type: Option<String>,
+    ) {
+        self.generic_functions
+            .insert(name, (generic_params, return_type));
+    }
+
     fn resolve_type(&self, s: &str, self_struct: Option<&str>) -> Type {
+        self.resolve_type_with_generics(s, &self.generics, self_struct)
+    }
+
+    fn resolve_type_with_generics(
+        &self,
+        s: &str,
+        generics: &HashMap<String, Type>,
+        self_struct: Option<&str>,
+    ) -> Type {
         if s == "Self"
             && let Some(struct_name) = self_struct
         {
             return Type::Struct(struct_name.to_string(), Vec::new());
         }
-        if let Some(typ) = self.generics.get(s) {
+        if let Some(typ) = generics.get(s) {
             return typ.clone();
         }
         let mut current = s.to_string();
@@ -226,7 +247,22 @@ impl TypeEnv {
                 break;
             }
         }
-        Type::from_str(&current).unwrap()
+        if let Some(open) = current.find('[')
+            && current.ends_with(']')
+        {
+            let base = &current[..open];
+            let args_str = &current[open + 1..current.len() - 1];
+            let args: Vec<Type> = args_str
+                .split(',')
+                .map(|a| self.resolve_type_with_generics(a.trim(), generics, self_struct))
+                .collect();
+            return Type::Struct(base.to_string(), args);
+        }
+        match Type::from_str(&current) {
+            Ok(Type::Unknown) => Type::Generic(current),
+            Ok(typ) => typ,
+            Err(_) => Type::Generic(current),
+        }
     }
 }
 
@@ -347,6 +383,13 @@ impl TypeChecker {
     fn register_functions(&mut self, functions: &[FunctionDef]) -> TypeResult<()> {
         for func in functions {
             self.env.insert_function(func.name.clone(), Type::Void);
+            if !func.generic_params.is_empty() {
+                self.env.insert_generic_function(
+                    func.name.clone(),
+                    func.generic_params.clone(),
+                    func.return_type.clone(),
+                );
+            }
         }
         Ok(())
     }
@@ -778,7 +821,11 @@ impl TypeChecker {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
                         && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field)
                     {
-                        return Ok(Type::from_str(&sf.typ).unwrap());
+                        return Ok(self.env.resolve_type_with_generics(
+                            &sf.typ,
+                            &self.env.generics,
+                            self.self_struct_type.as_deref(),
+                        ));
                     }
                     return Err(TypeError::new(format!("unknown field: {}", field)));
                 }
@@ -795,7 +842,11 @@ impl TypeChecker {
                     if let Some(sdef) = self.env.structs.iter().find(|s| &s.name == struct_name)
                         && let Some(sf) = sdef.fields.iter().find(|f| &f.name == field)
                     {
-                        let expected = Type::from_str(&sf.typ).unwrap();
+                        let expected = self.env.resolve_type_with_generics(
+                            &sf.typ,
+                            &self.env.generics,
+                            self.self_struct_type.as_deref(),
+                        );
                         if !self.types_compatible(&value_type, &expected) {
                             return Err(TypeError::new(format!(
                                 "cannot assign {} to field {} of type {}",
@@ -816,7 +867,11 @@ impl TypeChecker {
                     for (fname, fval) in fields {
                         let val_type = self.infer_expr(fval)?;
                         if let Some(sf) = sdef.fields.iter().find(|f| &f.name == fname) {
-                            let expected = Type::from_str(&sf.typ).unwrap();
+                            let expected = self.env.resolve_type_with_generics(
+                                &sf.typ,
+                                &self.env.generics,
+                                self.self_struct_type.as_deref(),
+                            );
                             if !self.types_compatible(&val_type, &expected) {
                                 return Err(TypeError::new(format!(
                                     "field {} has type {}, got {}",
@@ -943,7 +998,7 @@ impl TypeChecker {
             .unwrap_or_else(|| func.to_string())
     }
 
-    fn check_call(&mut self, func: &str, _args: &[Expr]) -> TypeResult<Type> {
+    fn check_call(&mut self, func: &str, args: &[Expr]) -> TypeResult<Type> {
         if let Some(ret) = self.builtin_return_type(func) {
             return Ok(ret);
         }
@@ -951,6 +1006,24 @@ impl TypeChecker {
         let resolved = self.resolve_function_name(func);
 
         if let Some(ret) = self.env.functions.get(&resolved) {
+            if let Some((generic_params, return_type_annot)) =
+                self.env.generic_functions.get(&resolved).cloned()
+                && !generic_params.is_empty()
+                && let Some(ret_str) = return_type_annot
+            {
+                let mut type_map: HashMap<String, Type> = HashMap::new();
+                for (i, gp) in generic_params.iter().enumerate() {
+                    if let Some(arg) = args.get(i) {
+                        let arg_type = self.infer_expr(arg)?;
+                        type_map.insert(gp.clone(), arg_type);
+                    }
+                }
+                return Ok(self.env.resolve_type_with_generics(
+                    &ret_str,
+                    &type_map,
+                    self.self_struct_type.as_deref(),
+                ));
+            }
             return Ok(ret.clone());
         }
 
@@ -1335,6 +1408,8 @@ impl TypeChecker {
                         .zip(b.iter())
                         .all(|(x, y)| self.types_compatible(x, y))
             }
+            (Type::Generic(_), _) => true,
+            (_, Type::Generic(_)) => true,
             _ => false,
         }
     }
