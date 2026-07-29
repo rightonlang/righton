@@ -213,6 +213,19 @@ impl BorrowChecker {
                 self.bindings = saved;
                 Ok(())
             }
+            Expr::ForIn {
+                variable,
+                iterable,
+                body,
+            } => {
+                self.visit_expr(iterable)?;
+                let saved = self.bindings.clone();
+                self.bindings
+                    .insert(variable.clone(), Binding::new(BindingKind::Copy));
+                self.check_stmts(&body.stmts)?;
+                self.bindings = saved;
+                Ok(())
+            }
             Expr::ForRange {
                 variable,
                 start,

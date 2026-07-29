@@ -2671,4 +2671,126 @@ mod tests {
             result.err()
         );
     }
+
+    // ========================
+    // LIST ITERATION TESTS
+    // ========================
+
+    #[test]
+    fn test_for_in_list_int_compiles() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    for x in [1, 2, 3]:\n        x\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        assert!(output.exists());
+
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("for_start"));
+        assert!(ir.contains("for_body"));
+        assert!(ir.contains("for_end"));
+        assert!(ir.contains("__rt_list_len") || ir.contains("getelementptr"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_for_in_list_float_compiles() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    for x in [1.0, 2.0, 3.0]:\n        x\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        assert!(output.exists());
+
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("for_start"));
+        assert!(ir.contains("for_body"));
+        assert!(ir.contains("for_end"));
+        assert!(ir.contains("load double"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_for_in_list_variable_compiles() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    let lst = [1, 2, 3]\n    for x in lst:\n        x\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        assert!(output.exists());
+
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("for_start"));
+        assert!(ir.contains("for_body"));
+        assert!(ir.contains("for_end"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn test_for_in_non_list_fails() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "fn main():\n    for x in 5:\n        x\n    return 0",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("for iterable must be string or list"),
+            "Expected type error for non-list iterable, got: {}",
+            stderr
+        );
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
+    }
 }

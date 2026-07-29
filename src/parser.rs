@@ -469,17 +469,27 @@ impl<'a> Parser<'a> {
 
         if self.current == Some(TokenKind::In) {
             self.advance();
-            let start = Box::new(self.parse_expr()?);
-            self.eat(TokenKind::DotDot)?;
-            let end = Box::new(self.parse_expr()?);
-            self.eat(TokenKind::Colon)?;
-            let body = self.parse_block()?;
-            Ok(Expr::ForRange {
-                variable,
-                start,
-                end,
-                body: Box::new(body),
-            })
+            let iterable = Box::new(self.parse_expr()?);
+            if self.current == Some(TokenKind::DotDot) {
+                self.advance();
+                let end = Box::new(self.parse_expr()?);
+                self.eat(TokenKind::Colon)?;
+                let body = self.parse_block()?;
+                Ok(Expr::ForRange {
+                    variable,
+                    start: iterable,
+                    end,
+                    body: Box::new(body),
+                })
+            } else {
+                self.eat(TokenKind::Colon)?;
+                let body = self.parse_block()?;
+                Ok(Expr::ForIn {
+                    variable,
+                    iterable,
+                    body: Box::new(body),
+                })
+            }
         } else {
             self.eat(TokenKind::Equal)?;
             let iterable = Box::new(self.parse_expr()?);
