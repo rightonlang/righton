@@ -207,6 +207,7 @@ impl LLVMTextGen {
         ir.push_str("declare i8* @fgets(i8*, i32, i8*)\n");
         ir.push_str("@stdin = external global i8*\n");
         ir.push_str("@.global_buffer = private global [1024 x i8] zeroinitializer\n\n");
+        ir.push_str("%String = type { i8*, i32, i32 }\n\n");
 
         self.emit_runtime_helpers();
 
@@ -832,7 +833,7 @@ impl LLVMTextGen {
         match t {
             "i32" => "i32",
             "f64" | "double" | "float" => "double",
-            "str" | "string" | "ptr" => "i8*",
+            "str" | "string" | "ptr" => "%String*",
             "void" => "void",
             _ => "void",
         }
@@ -1015,7 +1016,7 @@ impl LLVMTextGen {
         match t {
             "i32" => "i32",
             "f64" | "double" | "float" => "double",
-            "str" | "string" | "ptr" => "i8*",
+            "str" | "string" | "ptr" => "%String*",
             "void" => "void",
             _ => "i32",
         }
@@ -1025,7 +1026,7 @@ impl LLVMTextGen {
         match t {
             "i32" => Type::I32,
             "f64" | "double" | "float" => Type::F64,
-            "str" | "string" | "ptr" => Type::Ptr,
+            "str" | "string" | "ptr" => Type::String,
             _ => Type::I32,
         }
     }
@@ -1041,9 +1042,11 @@ impl LLVMTextGen {
             Expr::Literal(Literal::Int(_), _) => "i32",
             Expr::Literal(Literal::Float(_), _) => "double",
             Expr::Literal(Literal::Bool(_), _) => "i32",
-            Expr::Literal(Literal::Str(_), _) => "i8*",
-            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => "i8*",
-            Expr::Borrow { .. } => "i8*",
+            Expr::Literal(Literal::Str(_), _) => "%String*",
+            Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => {
+                "%String*"
+            }
+            Expr::Borrow { .. } => "%String*",
             Expr::List(_) => "i8*",
             Expr::StructLiteral { .. } => "i8*",
             Expr::EnumLiteral { .. } => "i8*",
@@ -1099,6 +1102,7 @@ impl LLVMTextGen {
                         Type::I32 => "i32",
                         Type::F64 => "double",
                         Type::Ptr => "i8*",
+                        Type::String => "%String*",
                         _ => "i8*",
                     }
                 } else if params.contains(name) {
@@ -1107,6 +1111,7 @@ impl LLVMTextGen {
                             Type::I32 => "i32",
                             Type::F64 => "double",
                             Type::Ptr => "i8*",
+                            Type::String => "%String*",
                             _ => "i8*",
                         }
                     } else {
@@ -1166,9 +1171,9 @@ impl LLVMTextGen {
                     "double"
                 } else if lt == "void" || rt == "void" {
                     "i32"
-                } else if lt == "i8*" && rt == "i8*" {
+                } else if (lt == "i8*" || lt == "%String*") && (rt == "i8*" || rt == "%String*") {
                     if matches!(*op, BinOp::Add) {
-                        "i8*"
+                        "%String*"
                     } else {
                         "i32"
                     }
@@ -1269,10 +1274,11 @@ impl LLVMTextGen {
     fn builtin_return_type(&self, func: &str) -> Option<&'static str> {
         match func {
             "__rt_strlen" => return Some("i32"),
-            "__rt_read_file" => return Some("i8*"),
+            "__rt_read_file" => return Some("%String*"),
             "__rt_write_file" => return Some("i32"),
             "__rt_exit" | "__rt_print_str" | "__rt_print_int" | "__rt_print_float"
             | "__rt_free" => return Some("void"),
+            "__rt_wrap_string" => return Some("%String*"),
             "__rt_contains" | "__rt_starts_with" | "__rt_ends_with" | "__rt_to_int"
             | "__rt_list_len" | "__rt_list_pop" => return Some("i32"),
             "__rt_substr"
@@ -1282,9 +1288,9 @@ impl LLVMTextGen {
             | "__rt_read_line"
             | "__rt_to_string_int"
             | "__rt_to_string_float"
-            | "__rt_list_push"
             | "__rt_to_hex"
             | "__rt_str_repeat" => return Some("i8*"),
+            "__rt_list_push" => return Some("i8*"),
             "__rt_to_float" | "__rt_floor" | "__rt_ceil" | "__rt_round" | "__rt_sqrt"
             | "__rt_sin" | "__rt_cos" | "__rt_tan" | "__rt_abs" => return Some("double"),
             _ => {}
@@ -1297,14 +1303,14 @@ impl LLVMTextGen {
         match func {
             "print" | "asm" | "exit" | "write_file" => Some("void"),
             "len" => Some("i32"),
-            "read_file" => Some("i8*"),
+            "read_file" => Some("%String*"),
             "contains" | "starts_with" | "ends_with" | "to_int" | "is_empty" => Some("i32"),
             "substr" | "trim" | "to_uppercase" | "to_lowercase" | "to_string" | "read_line" => {
-                Some("i8*")
+                Some("%String*")
             }
             "to_float" | "floor" | "ceil" | "round" => Some("double"),
             "sqrt" | "sin" | "cos" | "tan" => Some("double"),
-            "to_hex" | "str_repeat" => Some("i8*"),
+            "to_hex" | "str_repeat" => Some("%String*"),
             _ => None,
         }
     }
@@ -1639,18 +1645,18 @@ impl LLVMTextGen {
     fn get_function_param_types(&self, func: &str) -> Vec<&'static str> {
         // First check for builtin runtime functions
         let builtin_types = match func {
-            "__rt_strlen" => vec!["i8*"],
-            "__rt_print_str" => vec!["i8*"],
+            "__rt_strlen" => vec!["%String*"],
+            "__rt_print_str" => vec!["%String*"],
             "__rt_print_int" => vec!["i32"],
             "__rt_print_float" => vec!["double"],
             "__rt_exit" => vec!["i32"],
             "__rt_read_file" => vec!["i8*"],
-            "__rt_write_file" => vec!["i8*", "i8*"],
-            "__rt_contains" | "__rt_starts_with" | "__rt_ends_with" => vec!["i8*", "i8*"],
-            "__rt_substr" => vec!["i8*", "i32", "i32"],
-            "__rt_trim" | "__rt_to_uppercase" | "__rt_to_lowercase" => vec!["i8*"],
-            "__rt_to_int" => vec!["i8*"],
-            "__rt_to_float" => vec!["i8*"],
+            "__rt_write_file" => vec!["i8*", "%String*"],
+            "__rt_contains" | "__rt_starts_with" | "__rt_ends_with" => vec!["%String*", "%String*"],
+            "__rt_substr" => vec!["%String*", "i32", "i32"],
+            "__rt_trim" | "__rt_to_uppercase" | "__rt_to_lowercase" => vec!["%String*"],
+            "__rt_to_int" => vec!["%String*"],
+            "__rt_to_float" => vec!["%String*"],
             "__rt_floor" | "__rt_ceil" | "__rt_round" => vec!["double"],
             "__rt_read_line" => vec![],
             "__rt_to_string_int" => vec!["i32"],
@@ -1660,7 +1666,8 @@ impl LLVMTextGen {
             "__rt_list_pop" => vec!["i8*"],
             "__rt_free" => vec!["i8*"],
             "__rt_to_hex" => vec!["i32"],
-            "__rt_str_repeat" => vec!["i8*", "i32"],
+            "__rt_str_repeat" => vec!["%String*", "i32"],
+            "__rt_wrap_string" => vec!["i8*"],
             "__rt_sqrt" | "__rt_sin" | "__rt_cos" | "__rt_tan" | "__rt_abs" => vec!["double"],
             _ => vec![],
         };
@@ -1677,7 +1684,7 @@ impl LLVMTextGen {
                         match t.as_str() {
                             "i32" => "i32",
                             "f64" | "double" | "float" => "double",
-                            "str" | "string" | "ptr" => "i8*",
+                            "str" | "string" | "ptr" => "%String*",
                             _ => "i32",
                         }
                     } else {
@@ -1686,7 +1693,7 @@ impl LLVMTextGen {
                         match inferred {
                             Type::I32 => "i32",
                             Type::F64 => "double",
-                            Type::Ptr => "i8*",
+                            Type::String => "%String*",
                             _ => "i8*",
                         }
                     };
@@ -1729,6 +1736,46 @@ impl LLVMTextGen {
                 .unwrap();
                 writeln!(&mut self.functions, "  ret i8* %{}", ptr).unwrap();
             }
+            "%String*" => {
+                let empty = self.emit_string_const("");
+                let ptr = self.next_temp();
+                self.emit_gep(&empty, 1, &ptr);
+                let str_ptr = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = alloca %String", str_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.ptr = getelementptr %String, %String* %{}, i32 0, i32 0",
+                    str_ptr, str_ptr
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i8* %{}, i8** %{}.ptr",
+                    ptr, str_ptr
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.len = getelementptr %String, %String* %{}, i32 0, i32 1",
+                    str_ptr, str_ptr
+                )
+                .unwrap();
+                writeln!(&mut self.functions, "  store i32 0, i32* %{}.len", str_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.cap = getelementptr %String, %String* %{}, i32 0, i32 2",
+                    str_ptr, str_ptr
+                )
+                .unwrap();
+                writeln!(&mut self.functions, "  store i32 1, i32* %{}.cap", str_ptr).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast %String* %{} to %String*",
+                    ptr, str_ptr
+                )
+                .unwrap();
+                writeln!(&mut self.functions, "  ret %String* %{}", ptr).unwrap();
+            }
             "void" => {
                 if self.current_function.as_deref() == Some("main") {
                     self.functions.push_str("  ret i32 0\n");
@@ -1761,6 +1808,7 @@ impl LLVMTextGen {
                     let t = match inferred {
                         "i32" => Type::I32,
                         "double" => Type::F64,
+                        "%String*" | "i8*" => Type::String,
                         _ => Type::Ptr,
                     };
                     temp_locals.insert(p.to_string(), (t, format!("arg{}", i), false));
@@ -1784,7 +1832,7 @@ impl LLVMTextGen {
                     match resolved.as_str() {
                         "i32" => return Type::I32,
                         "f64" | "float" => return Type::F64,
-                        "str" | "string" | "ptr" => return Type::Ptr,
+                        "str" | "string" | "ptr" => return Type::String,
                         _ => {}
                     }
                 }
@@ -1792,6 +1840,7 @@ impl LLVMTextGen {
                 return match inferred {
                     "i32" => Type::I32,
                     "double" => Type::F64,
+                    "%String*" | "i8*" => Type::String,
                     _ => Type::Ptr,
                 };
             }
@@ -1875,7 +1924,7 @@ impl LLVMTextGen {
         };
 
         if is_used_in_string_context(body, param, self.stdlib_enabled) {
-            return Type::Ptr;
+            return Type::String;
         }
 
         // Check if param is used in int context (passed to int-expecting functions)
@@ -2055,7 +2104,7 @@ impl LLVMTextGen {
                     match resolved.as_str() {
                         "i32" => Type::I32,
                         "f64" | "float" => Type::F64,
-                        "str" | "string" | "ptr" => Type::Ptr,
+                        "str" | "string" | "ptr" => Type::String,
                         _ => return Err(CompileError::new(format!("unsupported type: {}", t))),
                     }
                 } else {
@@ -2063,6 +2112,7 @@ impl LLVMTextGen {
                     match inferred {
                         "i32" => Type::I32,
                         "double" => Type::F64,
+                        "%String*" => Type::String,
                         "i8*" => Type::Ptr,
                         "void" => Type::I32,
                         _ => {
@@ -2110,6 +2160,18 @@ impl LLVMTextGen {
                         )
                         .unwrap();
                         locals.insert(name.clone(), (Type::Ptr, alloca.clone(), *is_const));
+                    }
+                    Type::String => {
+                        let str_ptr = self.next_temp();
+                        self.generate_string_expr(value, params, locals, &str_ptr)?;
+                        writeln!(&mut self.functions, "  %{} = alloca %String*", alloca).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  store %String* %{}, %String** %{}",
+                            str_ptr, alloca
+                        )
+                        .unwrap();
+                        locals.insert(name.clone(), (Type::String, alloca.clone(), *is_const));
                     }
                     _ => {
                         // fallback for unsupported types
@@ -2168,6 +2230,16 @@ impl LLVMTextGen {
                         )
                         .unwrap();
                     }
+                    Type::String => {
+                        let ptr = self.next_temp();
+                        self.generate_string_expr(value, params, locals, &ptr)?;
+                        writeln!(
+                            &mut self.functions,
+                            "  store %String* %{}, %String** %{}",
+                            ptr, alloca
+                        )
+                        .unwrap();
+                    }
                     _ => {
                         // fallback for unsupported types
                         // handled as pointer
@@ -2209,6 +2281,10 @@ impl LLVMTextGen {
                     let ptr = self.next_temp();
                     self.generate_ptr_expr(inner, params, locals, &ptr)?;
                     writeln!(&mut self.functions, "  ret i8* %{}", ptr).unwrap();
+                } else if ty == "%String*" && return_ty == "%String*" {
+                    let ptr = self.next_temp();
+                    self.generate_string_expr(inner, params, locals, &ptr)?;
+                    writeln!(&mut self.functions, "  ret %String* %{}", ptr).unwrap();
                 } else if ty == "i32" && return_ty == "void" {
                     writeln!(&mut self.functions, "  ret void").unwrap();
                 } else if ty == "double" && return_ty == "double" {
@@ -3199,6 +3275,16 @@ impl LLVMTextGen {
                             writeln!(
                                 &mut self.functions,
                                 "  %{} = load i8*, i8** %{}",
+                                res, alloca
+                            )
+                            .unwrap();
+                            Ok(Val::Reg(res))
+                        }
+                        Type::String => {
+                            let res = self.next_temp();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = load %String*, %String** %{}",
                                 res, alloca
                             )
                             .unwrap();
@@ -4502,10 +4588,57 @@ impl LLVMTextGen {
         match arg {
             Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
                 let id = self.emit_string_const(s);
-                self.emit_gep(&id, s.len() + 1, result);
+                let ptr = self.next_temp();
+                self.emit_gep(&id, s.len() + 1, &ptr);
+                let len = s.len();
+                let cap = s.len() + 1;
+                writeln!(&mut self.functions, "  %{} = alloca %String", result).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.ptr = getelementptr %String, %String* %{}, i32 0, i32 0",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i8* %{}, i8** %{}.ptr",
+                    ptr, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.len = getelementptr %String, %String* %{}, i32 0, i32 1",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}.len",
+                    len, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.cap = getelementptr %String, %String* %{}, i32 0, i32 2",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}.cap",
+                    cap, result
+                )
+                .unwrap();
             }
             Expr::Identifier(name, _) => {
-                if let Some((Type::Ptr, alloca, _)) = locals.get(name) {
+                if let Some((Type::String, alloca, _)) = locals.get(name) {
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load %String*, %String** %{}",
+                        result, alloca
+                    )
+                    .unwrap();
+                } else if let Some((Type::Ptr, alloca, _)) = locals.get(name) {
                     writeln!(
                         &mut self.functions,
                         "  %{} = load i8*, i8** %{}",
@@ -5143,6 +5276,461 @@ impl LLVMTextGen {
         Ok(())
     }
 
+    fn generate_string_expr(
+        &mut self,
+        expr: &Expr,
+        params: &[String],
+        locals: &HashMap<String, (Type, String, bool)>,
+        result: &str,
+    ) -> CompileResult<()> {
+        match expr {
+            Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
+                let id = self.emit_string_const(s);
+                let ptr = self.next_temp();
+                self.emit_gep(&id, s.len() + 1, &ptr);
+                let len = s.len();
+                let cap = s.len() + 1;
+                writeln!(&mut self.functions, "  %{} = alloca %String", result).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.ptr = getelementptr %String, %String* %{}, i32 0, i32 0",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i8* %{}, i8** %{}.ptr",
+                    ptr, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.len = getelementptr %String, %String* %{}, i32 0, i32 1",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}.len",
+                    len, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.cap = getelementptr %String, %String* %{}, i32 0, i32 2",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 {}, i32* %{}.cap",
+                    cap, result
+                )
+                .unwrap();
+            }
+            Expr::FString(elements, _) => {
+                let buf_ptr = self.next_temp();
+                self.emit_fstring_to_buffer(elements, params, locals, &buf_ptr)?;
+                let len = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = call i32 @__rt_strlen(i8* %{})",
+                    len, buf_ptr
+                )
+                .unwrap();
+                let cap = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = add i32 %{}, 1", cap, len).unwrap();
+                writeln!(&mut self.functions, "  %{} = alloca %String", result).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.ptr = getelementptr %String, %String* %{}, i32 0, i32 0",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i8* %{}, i8** %{}.ptr",
+                    buf_ptr, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.len = getelementptr %String, %String* %{}, i32 0, i32 1",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 %{}, i32* %{}.len",
+                    len, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{}.cap = getelementptr %String, %String* %{}, i32 0, i32 2",
+                    result, result
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 %{}, i32* %{}.cap",
+                    cap, result
+                )
+                .unwrap();
+            }
+            Expr::Borrow { name, .. } => {
+                if let Some((Type::String, alloca, _)) = locals.get(name) {
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast %String** %{} to %String*",
+                        result, alloca
+                    )
+                    .unwrap();
+                } else if let Some((typ, alloca, _)) = locals.get(name) {
+                    let source_ty = match typ {
+                        Type::I32 => "i32",
+                        Type::F64 => "double",
+                        Type::Ptr => "i8*",
+                        _ => "i8*",
+                    };
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast {}* %{} to i8*",
+                        result, source_ty, alloca
+                    )
+                    .unwrap();
+                } else if let Some(idx) = params.iter().position(|p| p == name) {
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %arg{} to i8*",
+                        result, idx
+                    )
+                    .unwrap();
+                } else {
+                    return Err(CompileError::new(format!(
+                        "borrow of unknown variable: {}{}",
+                        name,
+                        self.suggest_variable(name, params, locals)
+                            .map(|s| format!(" did you mean `{}`?", s))
+                            .unwrap_or_default()
+                    )));
+                }
+            }
+            Expr::Identifier(name, _) => {
+                if let Some((Type::String, alloca, _)) = locals.get(name) {
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load %String*, %String** %{}",
+                        result, alloca
+                    )
+                    .unwrap();
+                } else if let Some((typ, alloca, _)) = locals.get(name) {
+                    let source_ty = match typ {
+                        Type::I32 => "i32",
+                        Type::F64 => "double",
+                        Type::Ptr => "i8*",
+                        _ => "i8*",
+                    };
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast {}* %{} to i8*",
+                        result, source_ty, alloca
+                    )
+                    .unwrap();
+                } else if let Some(idx) = params.iter().position(|p| p == name) {
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %arg{} to i8*",
+                        result, idx
+                    )
+                    .unwrap();
+                } else {
+                    return Err(CompileError::new(format!(
+                        "unknown variable: {}{}",
+                        name,
+                        self.suggest_variable(name, params, locals)
+                            .map(|s| format!(" did you mean `{}`?", s))
+                            .unwrap_or_default()
+                    )));
+                }
+            }
+            Expr::Call { func, args } => {
+                let ty = self
+                    .builtin_return_type(func)
+                    .or_else(|| {
+                        self.function_sigs
+                            .get(&self.resolve_function_name(func))
+                            .copied()
+                    })
+                    .unwrap_or("void");
+                if ty != "%String*" {
+                    return Err(CompileError::new(format!(
+                        "{}: expected string-returning function",
+                        func
+                    )));
+                }
+                let call_result = self.emit_call(func, args, params, locals)?;
+                let call_reg =
+                    call_result.ok_or_else(|| CompileError::new("expected call result"))?;
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast %String* %{} to %String*",
+                    result, call_reg
+                )
+                .unwrap();
+            }
+            Expr::Binary(l, op, r, _) if *op == BinOp::Add => {
+                let left_ty = self.infer_expr_type(l, params, locals);
+                let right_ty = self.infer_expr_type(r, params, locals);
+                if left_ty == "%String*" && right_ty == "%String*" {
+                    let lhs = self.next_temp();
+                    let rhs = self.next_temp();
+                    self.generate_string_expr(l, params, locals, &lhs)?;
+                    self.generate_string_expr(r, params, locals, &rhs)?;
+                    let lhs_ptr = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                        lhs_ptr, lhs
+                    )
+                    .unwrap();
+                    let lhs_str = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load i8*, i8** %{}",
+                        lhs_str, lhs_ptr
+                    )
+                    .unwrap();
+                    let rhs_ptr = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                        rhs_ptr, rhs
+                    )
+                    .unwrap();
+                    let rhs_str = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load i8*, i8** %{}",
+                        rhs_str, rhs_ptr
+                    )
+                    .unwrap();
+                    let buf_ptr = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr inbounds [1024 x i8], [1024 x i8]* @.global_buffer, i32 0, i32 0",
+                        buf_ptr
+                    ).unwrap();
+                    let fmt_id = self.emit_string_const("%s%s");
+                    let fmt_ptr = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr [5 x i8], [5 x i8]* @{}, i32 0, i32 0",
+                        fmt_ptr, fmt_id
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  call i32 (i8*, i8*, ...) @sprintf(i8* %{}, i8* %{}, i8* %{}, i8* %{})",
+                        buf_ptr, fmt_ptr, lhs_str, rhs_str
+                    )
+                    .unwrap();
+                    let concat_len = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = call i32 @__rt_strlen(i8* %{})",
+                        concat_len, buf_ptr
+                    )
+                    .unwrap();
+                    let concat_cap = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = add i32 %{}, 1",
+                        concat_cap, concat_len
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  %{} = alloca %String", result).unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{}.ptr = getelementptr %String, %String* %{}, i32 0, i32 0",
+                        result, result
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  store i8* %{}, i8** %{}.ptr",
+                        buf_ptr, result
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{}.len = getelementptr %String, %String* %{}, i32 0, i32 1",
+                        result, result
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  store i32 %{}, i32* %{}.len",
+                        concat_len, result
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{}.cap = getelementptr %String, %String* %{}, i32 0, i32 2",
+                        result, result
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut self.functions,
+                        "  store i32 %{}, i32* %{}.cap",
+                        concat_cap, result
+                    )
+                    .unwrap();
+                } else {
+                    return Err(CompileError::new(
+                        "string concatenation requires two strings",
+                    ));
+                }
+            }
+            _ => return Err(CompileError::new("expected string expression")),
+        }
+        Ok(())
+    }
+
+    fn emit_fstring_to_buffer(
+        &mut self,
+        elements: &[Expr],
+        params: &[String],
+        locals: &HashMap<String, (Type, String, bool)>,
+        result_ptr: &str,
+    ) -> CompileResult<()> {
+        let mut parts = Vec::new();
+        let mut args = Vec::new();
+        for el in elements {
+            match el {
+                Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
+                    parts.push(s.clone());
+                }
+                Expr::Identifier(name, _) => {
+                    parts.push("%s".to_string());
+                    if let Some((Type::String, alloca, _)) = locals.get(name) {
+                        let loaded = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load %String*, %String** %{}",
+                            loaded, alloca
+                        )
+                        .unwrap();
+                        let ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                            ptr, loaded
+                        )
+                        .unwrap();
+                        let str_val = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load i8*, i8** %{}",
+                            str_val, ptr
+                        )
+                        .unwrap();
+                        args.push(format!("i8* %{}", str_val));
+                    } else if let Some((Type::I32, alloca, _)) = locals.get(name) {
+                        parts.push("%d".to_string());
+                        let loaded = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load i32, i32* %{}",
+                            loaded, alloca
+                        )
+                        .unwrap();
+                        args.push(format!("i32 %{}", loaded));
+                    } else if let Some((Type::F64, alloca, _)) = locals.get(name) {
+                        parts.push("%f".to_string());
+                        let loaded = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load double, double* %{}",
+                            loaded, alloca
+                        )
+                        .unwrap();
+                        args.push(format!("double %{}", loaded));
+                    } else if let Some((Type::Ptr, alloca, _)) = locals.get(name) {
+                        let loaded = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load i8*, i8** %{}",
+                            loaded, alloca
+                        )
+                        .unwrap();
+                        args.push(format!("i8* %{}", loaded));
+                    } else if let Some(idx) = params.iter().position(|p| p == name) {
+                        parts.push("%s".to_string());
+                        args.push(format!("i8* %arg{}", idx));
+                    } else {
+                        parts.push("%s".to_string());
+                        let lit = self.emit_string_const(name);
+                        let loaded = self.next_temp();
+                        self.emit_gep(&lit, name.len() + 1, &loaded);
+                        args.push(format!("i8* %{}", loaded));
+                    }
+                }
+                expr => {
+                    parts.push("%s".to_string());
+                    let val = self.next_temp();
+                    self.generate_string_expr(expr, params, locals, &val)?;
+                    let val_ptr = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                        val_ptr, val
+                    )
+                    .unwrap();
+                    let val_str = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = load i8*, i8** %{}",
+                        val_str, val_ptr
+                    )
+                    .unwrap();
+                    args.push(format!("i8* %{}", val_str));
+                }
+            }
+        }
+
+        let fmt_str = parts.join("");
+        let fmt_id = self.emit_string_const(&fmt_str);
+        let fmt_ptr = self.next_temp();
+        self.emit_gep(&fmt_id, fmt_str.len() + 1, &fmt_ptr);
+
+        let buf_ptr = self.next_temp();
+        writeln!(
+            &mut self.functions,
+            "  %{} = getelementptr inbounds [1024 x i8], [1024 x i8]* @.global_buffer, i32 0, i32 0",
+            buf_ptr
+        )
+        .unwrap();
+        let mut sprintf_args = format!("i8* %{}, i8* %{}", buf_ptr, fmt_ptr);
+        for arg in args {
+            write!(&mut sprintf_args, ", {}", arg).unwrap();
+        }
+
+        writeln!(
+            &mut self.functions,
+            "  call i32 (i8*, i8*, ...) @sprintf({})",
+            sprintf_args
+        )
+        .unwrap();
+        writeln!(
+            &mut self.functions,
+            "  %{} = bitcast i8* %{} to i8*",
+            result_ptr, buf_ptr
+        )
+        .unwrap();
+        Ok(())
+    }
+
     fn emit_call(
         &mut self,
         func: &str,
@@ -5155,35 +5743,35 @@ impl LLVMTextGen {
                 return Err(CompileError::new("len: expected 1 argument"));
             }
             let ptr = self.next_temp();
-            self.generate_ptr_expr(&args[0], params, locals, &ptr)?;
+            self.generate_string_expr(&args[0], params, locals, &ptr)?;
             let len_reg = self.next_temp();
             writeln!(
                 &mut self.functions,
-                "  %{} = call i64 @__rt_strlen(i8* %{})",
+                "  %{} = call i32 @__rt_strlen(%String* %{})",
                 len_reg, ptr
             )
             .unwrap();
-            let int_reg = self.next_temp();
-            writeln!(
-                &mut self.functions,
-                "  %{} = trunc i64 %{} to i32",
-                int_reg, len_reg
-            )
-            .unwrap();
-            return Ok(Some(int_reg));
+            return Ok(Some(len_reg));
         }
 
         if self.stdlib_enabled && func == "read_file" {
             if args.len() != 1 {
                 return Err(CompileError::new("read_file: expected 1 argument"));
             }
-            let ptr = self.next_temp();
-            self.generate_ptr_expr(&args[0], params, locals, &ptr)?;
-            let result = self.next_temp();
+            let path_ptr = self.next_temp();
+            self.generate_ptr_expr(&args[0], params, locals, &path_ptr)?;
+            let raw_result = self.next_temp();
             writeln!(
                 &mut self.functions,
                 "  %{} = call i8* @__rt_read_file(i8* %{})",
-                result, ptr
+                raw_result, path_ptr
+            )
+            .unwrap();
+            let result = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = call %String* @__rt_wrap_string(i8* %{})",
+                result, raw_result
             )
             .unwrap();
             return Ok(Some(result));
@@ -5196,12 +5784,26 @@ impl LLVMTextGen {
             let path_ptr = self.next_temp();
             self.generate_ptr_expr(&args[0], params, locals, &path_ptr)?;
             let data_ptr = self.next_temp();
-            self.generate_ptr_expr(&args[1], params, locals, &data_ptr)?;
+            self.generate_string_expr(&args[1], params, locals, &data_ptr)?;
+            let data_str = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                data_str, data_ptr
+            )
+            .unwrap();
+            let data_i8 = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = load i8*, i8** %{}",
+                data_i8, data_str
+            )
+            .unwrap();
             let status = self.next_temp();
             writeln!(
                 &mut self.functions,
                 "  %{} = call i32 @__rt_write_file(i8* %{}, i8* %{})",
-                status, path_ptr, data_ptr
+                status, path_ptr, data_i8
             )
             .unwrap();
             return Ok(Some(status));
@@ -5228,29 +5830,43 @@ impl LLVMTextGen {
             let ty = self.infer_expr_type(&args[0], params, locals);
             if ty == "i32" {
                 let val = self.generate_int_expr(&args[0], params, locals)?;
-                let result = self.next_temp();
+                let raw_result = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = call i8* @__rt_to_string_int(i32 {})",
-                    result,
+                    raw_result,
                     val.as_str()
+                )
+                .unwrap();
+                let result = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = call %String* @__rt_wrap_string(i8* %{})",
+                    result, raw_result
                 )
                 .unwrap();
                 return Ok(Some(result));
             } else if ty == "double" {
                 let val = self.generate_float_expr(&args[0], params, locals)?;
-                let result = self.next_temp();
+                let raw_result = self.next_temp();
                 writeln!(
                     &mut self.functions,
                     "  %{} = call i8* @__rt_to_string_float(double {})",
-                    result,
+                    raw_result,
                     val.as_str()
                 )
                 .unwrap();
+                let result = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = call %String* @__rt_wrap_string(i8* %{})",
+                    result, raw_result
+                )
+                .unwrap();
                 return Ok(Some(result));
-            } else if ty == "i8*" {
+            } else if ty == "%String*" {
                 let ptr = self.next_temp();
-                self.generate_ptr_expr(&args[0], params, locals, &ptr)?;
+                self.generate_string_expr(&args[0], params, locals, &ptr)?;
                 return Ok(Some(ptr));
             } else {
                 return Err(CompileError::new("to_string: unsupported type"));
@@ -5314,6 +5930,11 @@ impl LLVMTextGen {
                     self.generate_ptr_expr(arg, params, locals, &ptr)?;
                     call_args.push(format!("i8* %{}", ptr));
                 }
+                "%String*" => {
+                    let ptr = self.next_temp();
+                    self.generate_string_expr(arg, params, locals, &ptr)?;
+                    call_args.push(format!("%String* %{}", ptr));
+                }
                 _ => {
                     return Err(CompileError::new(format!(
                         "unsupported argument type in call: {}",
@@ -5355,18 +5976,44 @@ impl LLVMTextGen {
         result: &str,
     ) -> CompileResult<()> {
         if let Some((typ, alloca, _)) = locals.get(name) {
-            let source_ty = match typ {
-                Type::I32 => "i32",
-                Type::F64 => "double",
-                Type::Ptr => "i8*",
-                _ => "i8*",
-            };
-            writeln!(
-                &mut self.functions,
-                "  %{} = bitcast {}* %{} to i8*",
-                result, source_ty, alloca
-            )
-            .unwrap();
+            match typ {
+                Type::String => {
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast %String** %{} to %String*",
+                        result, alloca
+                    )
+                    .unwrap();
+                }
+                Type::I32 | Type::F64 | Type::Ptr => {
+                    let source_ty = match typ {
+                        Type::I32 => "i32",
+                        Type::F64 => "double",
+                        Type::Ptr => "i8*",
+                        _ => "i8*",
+                    };
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast {}* %{} to i8*",
+                        result, source_ty, alloca
+                    )
+                    .unwrap();
+                }
+                _ => {
+                    let source_ty = match typ {
+                        Type::I32 => "i32",
+                        Type::F64 => "double",
+                        Type::Ptr => "i8*",
+                        _ => "i8*",
+                    };
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast {}* %{} to i8*",
+                        result, source_ty, alloca
+                    )
+                    .unwrap();
+                }
+            }
             return Ok(());
         }
 
@@ -5868,6 +6515,36 @@ impl LLVMTextGen {
         writeln!(&mut helpers, "  br label %done").unwrap();
         writeln!(&mut helpers, "done:").unwrap();
         writeln!(&mut helpers, "  ret void").unwrap();
+        writeln!(&mut helpers, "}}\n").unwrap();
+
+        writeln!(&mut helpers, "define %String* @__rt_wrap_string(i8* %s) {{").unwrap();
+        writeln!(&mut helpers, "entry:").unwrap();
+        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
+        writeln!(&mut helpers, "  %len32 = trunc i64 %len to i32").unwrap();
+        writeln!(&mut helpers, "  %str = call i8* @malloc(i64 12)").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %ptr_gep = getelementptr i8, i8* %str, i32 0"
+        )
+        .unwrap();
+        writeln!(&mut helpers, "  %ptr_field = bitcast i8* %ptr_gep to i8**").unwrap();
+        writeln!(&mut helpers, "  store i8* %s, i8** %ptr_field").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %len_gep = getelementptr i8, i8* %str, i32 4"
+        )
+        .unwrap();
+        writeln!(&mut helpers, "  %len_field = bitcast i8* %len_gep to i32*").unwrap();
+        writeln!(&mut helpers, "  store i32 %len32, i32* %len_field").unwrap();
+        writeln!(
+            &mut helpers,
+            "  %cap_gep = getelementptr i8, i8* %str, i32 8"
+        )
+        .unwrap();
+        writeln!(&mut helpers, "  %cap_field = bitcast i8* %cap_gep to i32*").unwrap();
+        writeln!(&mut helpers, "  store i32 %len32, i32* %cap_field").unwrap();
+        writeln!(&mut helpers, "  %result = bitcast i8* %str to %String*").unwrap();
+        writeln!(&mut helpers, "  ret %String* %result").unwrap();
         writeln!(&mut helpers, "}}\n").unwrap();
 
         // Bounds check panic
