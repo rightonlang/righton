@@ -124,6 +124,11 @@ pub enum Expr {
         iterable: Box<Expr>,
         body: Box<Block>,
     },
+    ForIn {
+        variable: String,
+        iterable: Box<Expr>,
+        body: Box<Block>,
+    },
     ForRange {
         variable: String,
         start: Box<Expr>,
@@ -170,6 +175,7 @@ impl Expr {
             Expr::If { condition, .. } => condition.span(),
             Expr::While { condition, .. } => condition.span(),
             Expr::For { iterable, .. } => iterable.span(),
+            Expr::ForIn { iterable, .. } => iterable.span(),
             Expr::ForRange { start, .. } => start.span(),
             Expr::Match { expr, .. } => expr.span(),
             Expr::Break | Expr::Continue => SourceSpan::unknown(),

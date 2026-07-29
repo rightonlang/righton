@@ -115,6 +115,7 @@ pub struct LLVMTextGen {
     struct_defs: Vec<StructDef>,
     enum_defs: Vec<EnumDef>,
     type_aliases: HashMap<String, String>,
+    list_elem_types: HashMap<String, String>,
 }
 
 impl Default for LLVMTextGen {
@@ -142,6 +143,7 @@ impl LLVMTextGen {
             struct_defs: Vec::new(),
             enum_defs: Vec::new(),
             type_aliases: HashMap::new(),
+            list_elem_types: HashMap::new(),
         }
     }
 
@@ -371,6 +373,16 @@ impl LLVMTextGen {
                 }
             }
             Expr::For {
+                variable: _,
+                iterable,
+                body,
+            } => {
+                self.collect_calls(iterable, calls);
+                for stmt in &body.stmts {
+                    self.collect_calls(stmt, calls);
+                }
+            }
+            Expr::ForIn {
                 variable: _,
                 iterable,
                 body,
@@ -669,6 +681,21 @@ impl LLVMTextGen {
                 iterable,
                 body,
             } => Expr::For {
+                variable,
+                iterable: Box::new(self.rename_calls(*iterable, alias_map, function_names)),
+                body: Box::new(Block {
+                    stmts: body
+                        .stmts
+                        .into_iter()
+                        .map(|stmt| self.rename_calls(stmt, alias_map, function_names))
+                        .collect(),
+                }),
+            },
+            Expr::ForIn {
+                variable,
+                iterable,
+                body,
+            } => Expr::ForIn {
                 variable,
                 iterable: Box::new(self.rename_calls(*iterable, alias_map, function_names)),
                 body: Box::new(Block {
@@ -1028,6 +1055,27 @@ impl LLVMTextGen {
             "f64" | "double" | "float" => Type::F64,
             "str" | "string" | "ptr" => Type::String,
             _ => Type::I32,
+        }
+    }
+
+    fn infer_list_elem_type(&self, expr: &Expr, params: &[String], locals: &HashMap<String, (Type, String, bool)>) -> String {
+        match expr {
+            Expr::List(items) if !items.is_empty() => {
+                self.infer_expr_type(&items[0], params, locals).to_string()
+            }
+            Expr::Identifier(name, _) => {
+                self.list_elem_types.get(name).cloned().unwrap_or_else(|| {
+                    self.infer_expr_type(expr, params, locals).to_string()
+                })
+            }
+            _ => "i32".to_string(),
+        }
+    }
+
+    fn list_elem_size(elem_type: &str) -> i32 {
+        match elem_type {
+            "double" => 8,
+            _ => 4,
         }
     }
 
@@ -1595,6 +1643,22 @@ impl LLVMTextGen {
                     body: Box::new(Block { stmts: new_body }),
                 })
             }
+            Expr::ForIn {
+                variable,
+                iterable,
+                body,
+            } => {
+                let new_body = body
+                    .stmts
+                    .iter()
+                    .map(|e| self.substitute_expr_generics(e, type_map))
+                    .collect::<CompileResult<Vec<_>>>()?;
+                Ok(Expr::ForIn {
+                    variable: variable.clone(),
+                    iterable: Box::new(self.substitute_expr_generics(iterable, type_map)?),
+                    body: Box::new(Block { stmts: new_body }),
+                })
+            }
             Expr::ForRange {
                 variable,
                 start,
@@ -2032,6 +2096,10 @@ impl LLVMTextGen {
                     param_in_binary(iterable, param)
                         || body.stmts.iter().any(|e| param_in_binary(e, param))
                 }
+                Expr::ForIn { iterable, body, .. } => {
+                    param_in_binary(iterable, param)
+                        || body.stmts.iter().any(|e| param_in_binary(e, param))
+                }
                 Expr::ForRange {
                     start, end, body, ..
                 } => {
@@ -2160,6 +2228,10 @@ impl LLVMTextGen {
                         )
                         .unwrap();
                         locals.insert(name.clone(), (Type::Ptr, alloca.clone(), *is_const));
+                        if let Expr::List(_) = value.as_ref() {
+                            let elem_type = self.infer_list_elem_type(value, params, locals);
+                            self.list_elem_types.insert(name.clone(), elem_type);
+                        }
                     }
                     Type::String => {
                         let str_ptr = self.next_temp();
@@ -2491,6 +2563,190 @@ impl LLVMTextGen {
                     writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 }
 
+                writeln!(&mut self.functions, "{}:", loop_end).unwrap();
+                self.loop_label_stack.pop();
+            }
+
+            Expr::ForIn {
+                variable,
+                iterable,
+                body,
+            } => {
+                let list_ptr = self.next_temp();
+                self.generate_ptr_expr(iterable, params, locals, &list_ptr)?;
+
+                let len_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 4",
+                    len_ptr, list_ptr
+                )
+                .unwrap();
+                let len_i32 = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    len_i32, len_ptr
+                )
+                .unwrap();
+                let list_len = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    list_len, len_i32
+                )
+                .unwrap();
+
+                let elem_type = self.infer_list_elem_type(iterable, params, locals);
+                let elem_size = Self::list_elem_size(&elem_type);
+
+                let var_alloca = self.next_temp();
+                match elem_type.as_str() {
+                    "double" => {
+                        writeln!(&mut self.functions, "  %{} = alloca double", var_alloca).unwrap();
+                    }
+                    _ => {
+                        writeln!(&mut self.functions, "  %{} = alloca i32", var_alloca).unwrap();
+                    }
+                }
+
+                let counter_alloca = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = alloca i32", counter_alloca).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 0, i32* %{}",
+                    counter_alloca
+                )
+                .unwrap();
+
+                let mut locals_for = locals.clone();
+                locals_for.insert(
+                    variable.clone(),
+                    (Self::type_str_to_type(&elem_type), var_alloca.clone(), false),
+                );
+
+                let loop_start = self.next_block_label("for_start");
+                let loop_body = self.next_block_label("for_body");
+                let loop_end = self.next_block_label("for_end");
+
+                self.loop_label_stack
+                    .push((loop_start.clone(), loop_end.clone()));
+
+                writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
+                writeln!(&mut self.functions, "{}:", loop_start).unwrap();
+
+                let counter_val = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    counter_val, counter_alloca
+                )
+                .unwrap();
+
+                let loop_cond = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp slt i32 %{}, {}",
+                    loop_cond, counter_val, list_len
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  br i1 %{}, label %{}, label %{}",
+                    loop_cond, loop_body, loop_end
+                )
+                .unwrap();
+
+                writeln!(&mut self.functions, "{}:", loop_body).unwrap();
+
+                let elem_off = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = mul i32 {}, {}",
+                    elem_off, counter_val, elem_size
+                )
+                .unwrap();
+                let elem_off_total = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = add i32 %{}, 8",
+                    elem_off_total, elem_off
+                )
+                .unwrap();
+                let elem_gep = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 {}",
+                    elem_gep, list_ptr, elem_off_total
+                )
+                .unwrap();
+
+                match elem_type.as_str() {
+                    "double" => {
+                        let elem_ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %{} to double*",
+                            elem_ptr, elem_gep
+                        )
+                        .unwrap();
+                        let elem_val = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load double, double* %{}",
+                            elem_val, elem_ptr
+                        )
+                        .unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  store double %{}, double* %{}",
+                            elem_val, var_alloca
+                        )
+                        .unwrap();
+                    }
+                    _ => {
+                        let elem_ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = bitcast i8* %{} to i32*",
+                            elem_ptr, elem_gep
+                        )
+                        .unwrap();
+                        let elem_val = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load i32, i32* %{}",
+                            elem_val, elem_ptr
+                        )
+                        .unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  store i32 %{}, i32* %{}",
+                            elem_val, var_alloca
+                        )
+                        .unwrap();
+                    }
+                }
+
+                for stmt in &body.stmts {
+                    self.generate_expr(stmt, params, &mut locals_for, return_ty)?;
+                }
+
+                let new_counter = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = add i32 %{}, 1",
+                    new_counter, counter_val
+                )
+                .unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  store i32 %{}, i32* %{}",
+                    new_counter, counter_alloca
+                )
+                .unwrap();
+
+                writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_end).unwrap();
                 self.loop_label_stack.pop();
             }
@@ -7180,5 +7436,23 @@ line"""#,
     fn test_compile_float_inference() {
         let ir = compile_expr("fn test():\n    let x = 2.5\n    let y = x * 2.0\n    print(y)");
         assert!(ir.contains("alloca double"));
+    }
+
+    #[test]
+    fn test_compile_for_in_list() {
+        let ir = compile_expr("fn test():\n    for x in [1, 2, 3]:\n        x");
+        assert!(ir.contains("for_start"));
+        assert!(ir.contains("for_body"));
+        assert!(ir.contains("for_end"));
+        assert!(ir.contains("__rt_list_len") || ir.contains("getelementptr"));
+    }
+
+    #[test]
+    fn test_compile_for_in_list_float() {
+        let ir = compile_expr("fn test():\n    for x in [1.0, 2.0, 3.0]:\n        x");
+        assert!(ir.contains("for_start"));
+        assert!(ir.contains("for_body"));
+        assert!(ir.contains("for_end"));
+        assert!(ir.contains("load double"));
     }
 }

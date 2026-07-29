@@ -668,6 +668,27 @@ impl TypeChecker {
                 self.infer_block_type(body);
                 Ok(Type::Void)
             }
+            Expr::ForIn {
+                variable,
+                iterable,
+                body,
+            } => {
+                let iter_type = self.infer_expr(iterable)?;
+                match &iter_type {
+                    Type::String => {
+                        self.env.insert_local(variable.clone(), Type::I32);
+                    }
+                    Type::Struct(name, elem_types) if name == "List" => {
+                        let elem_type = elem_types.first().cloned().unwrap_or(Type::I32);
+                        self.env.insert_local(variable.clone(), elem_type);
+                    }
+                    _ => {
+                        return Err(TypeError::new("for iterable must be string or list"));
+                    }
+                }
+                self.infer_block_type(body);
+                Ok(Type::Void)
+            }
             Expr::ForRange {
                 variable,
                 start,
@@ -1210,6 +1231,29 @@ impl TypeChecker {
                     return Err(TypeError::new("for iterable must be string or i32"));
                 }
                 self.env.insert_local(variable.clone(), Type::I32);
+                for expr in &body.stmts {
+                    self.check_expr(expr)?;
+                }
+                Ok(Type::Void)
+            }
+            Expr::ForIn {
+                variable,
+                iterable,
+                body,
+            } => {
+                let iter_type = self.infer_expr(iterable)?;
+                match &iter_type {
+                    Type::String => {
+                        self.env.insert_local(variable.clone(), Type::I32);
+                    }
+                    Type::Struct(name, elem_types) if name == "List" => {
+                        let elem_type = elem_types.first().cloned().unwrap_or(Type::I32);
+                        self.env.insert_local(variable.clone(), elem_type);
+                    }
+                    _ => {
+                        return Err(TypeError::new("for iterable must be string or list"));
+                    }
+                }
                 for expr in &body.stmts {
                     self.check_expr(expr)?;
                 }
