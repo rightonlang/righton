@@ -2769,7 +2769,11 @@ mod tests {
     fn test_for_in_non_list_fails() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "fn main():\n    for x in 5:\n        x\n    return 0").unwrap();
+        fs::write(
+            &input,
+            "fn main():\n    for x in 5:\n        x\n    return 0",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",

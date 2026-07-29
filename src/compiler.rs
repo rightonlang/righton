@@ -1058,16 +1058,21 @@ impl LLVMTextGen {
         }
     }
 
-    fn infer_list_elem_type(&self, expr: &Expr, params: &[String], locals: &HashMap<String, (Type, String, bool)>) -> String {
+    fn infer_list_elem_type(
+        &self,
+        expr: &Expr,
+        params: &[String],
+        locals: &HashMap<String, (Type, String, bool)>,
+    ) -> String {
         match expr {
             Expr::List(items) if !items.is_empty() => {
                 self.infer_expr_type(&items[0], params, locals).to_string()
             }
-            Expr::Identifier(name, _) => {
-                self.list_elem_types.get(name).cloned().unwrap_or_else(|| {
-                    self.infer_expr_type(expr, params, locals).to_string()
-                })
-            }
+            Expr::Identifier(name, _) => self
+                .list_elem_types
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| self.infer_expr_type(expr, params, locals).to_string()),
             _ => "i32".to_string(),
         }
     }
@@ -2622,7 +2627,11 @@ impl LLVMTextGen {
                 let mut locals_for = locals.clone();
                 locals_for.insert(
                     variable.clone(),
-                    (Self::type_str_to_type(&elem_type), var_alloca.clone(), false),
+                    (
+                        Self::type_str_to_type(&elem_type),
+                        var_alloca.clone(),
+                        false,
+                    ),
                 );
 
                 let loop_start = self.next_block_label("for_start");
