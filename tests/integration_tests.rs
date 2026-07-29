@@ -5,7 +5,9 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn temp_root() -> PathBuf {
         let mut root = std::env::temp_dir();
@@ -16,11 +18,8 @@ mod tests {
 
     fn temp_file(ext: &str) -> PathBuf {
         let mut path = temp_root();
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock moved backwards")
-            .as_nanos();
-        path.push(format!("righton_test_{}.{}", stamp, ext));
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        path.push(format!("righton_test_{}.{}", id, ext));
         path
     }
 
