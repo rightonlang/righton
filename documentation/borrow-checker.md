@@ -25,13 +25,13 @@ A single variable owns the value.
 - Responsible for deallocation (automatic via scope end)
 - Can be moved, invalidating the previous owner
 
-### 2. IMMUTABLE BORROW (`&T`)
+### 2. IMMUTABLE BORROW (`&name`)
 Read-only reference.
 
 - Multiple immutable borrows allowed simultaneously
 - Prevents mutation of the original value
 
-### 3. MUTABLE BORROW (`&mut T`)
+### 3. MUTABLE BORROW (`&mut name`)
 Exclusive mutable reference.
 
 - Only one allowed at a time
@@ -45,8 +45,8 @@ Exclusive mutable reference.
 Each value has exactly one owner at any time.
 
 ```rtn
-let a = make();
-let b = a; // move
+let a = make()
+let b = a  // move
 // a is now invalid
 ````
 
@@ -69,8 +69,8 @@ Multiple immutable borrows are allowed.
 
 ```rtn
 let a = make();
-let r1 = &a;
-let r2 = &a; // OK
+let r1 = &a
+let r2 = &a  // OK
 ```
 
 ---
@@ -81,8 +81,8 @@ Only one mutable borrow can exist at a time.
 
 ```rtn
 let a = make();
-let m1 = &mut a;
-let m2 = &mut a; // ERROR
+let m1 = &mut a
+let m2 = &mut a  // ERROR
 ```
 
 ---
@@ -92,9 +92,9 @@ let m2 = &mut a; // ERROR
 Immutable and mutable borrows cannot coexist.
 
 ```rtn
-let a = make();
-let r = &a;
-let m = &mut a; // ERROR
+let a = make()
+let r = &a
+let m = &mut a  // ERROR
 ```
 
 ---
@@ -108,7 +108,7 @@ Borrow validity is limited to lexical scope `{}`.
 
 ```rtn
 {
-    let r = &a;
+    let r = &a
 } // r becomes invalid here
 ```
 
@@ -134,7 +134,7 @@ struct VarState {
 ### Move Operation
 
 ```rtn
-a = b;
+a = b
 ```
 
 Checks:
@@ -148,7 +148,7 @@ Checks:
 ### Immutable Borrow
 
 ```rtn
-r = &a;
+r = &a
 ```
 
 Checks:
@@ -161,7 +161,7 @@ Checks:
 ### Mutable Borrow
 
 ```rtn
-m = &mut a;
+m = &mut a
 ```
 
 Checks:
