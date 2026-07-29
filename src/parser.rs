@@ -111,6 +111,7 @@ pub struct Parser<'a> {
     current: Option<TokenKind>,
     current_col: usize,
     errors: Vec<ParseError>,
+    no_struct_literal: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -122,6 +123,7 @@ impl<'a> Parser<'a> {
             current: Some(first.kind),
             current_col: col,
             errors: Vec::new(),
+            no_struct_literal: false,
         }
     }
 
@@ -314,6 +316,12 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let expr = self.parse_primary()?;
                 Ok(Expr::Unary(UnaryOp::Not, Box::new(expr), span))
+            }
+            Some(TokenKind::Try) => {
+                let span = self.current_span();
+                self.advance();
+                let expr = self.parse_primary()?;
+                Ok(Expr::Try(Box::new(expr), span))
             }
             Some(TokenKind::IntLiteral(n)) => {
                 let span = self.current_span();
@@ -1125,7 +1133,9 @@ impl<'a> Parser<'a> {
 
     fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
         self.eat(TokenKind::Match)?;
+        self.no_struct_literal = true;
         let expr = Box::new(self.parse_expr()?);
+        self.no_struct_literal = false;
         self.eat(TokenKind::LCurly)?;
         let mut arms = Vec::new();
         loop {
@@ -1428,34 +1438,36 @@ impl<'a> Parser<'a> {
                             };
                         }
                         Some(TokenKind::LCurly) => {
-                            self.advance();
-                            let mut fields = Vec::new();
-                            loop {
-                                while self.current == Some(TokenKind::Newline) {
-                                    self.advance();
-                                }
-                                if self.current == Some(TokenKind::RCurly) {
-                                    break;
-                                }
-                                if let Some(TokenKind::Identifier(fname)) = self.current.clone() {
-                                    self.advance();
-                                    self.eat(TokenKind::Colon)?;
-                                    let fvalue = self.parse_expr()?;
-                                    fields.push((fname, fvalue));
-                                    if self.current == Some(TokenKind::Comma) {
+                            if !self.no_struct_literal {
+                                self.advance();
+                                let mut fields = Vec::new();
+                                loop {
+                                    while self.current == Some(TokenKind::Newline) {
                                         self.advance();
+                                    }
+                                    if self.current == Some(TokenKind::RCurly) {
+                                        break;
+                                    }
+                                    if let Some(TokenKind::Identifier(fname)) = self.current.clone() {
+                                        self.advance();
+                                        self.eat(TokenKind::Colon)?;
+                                        let fvalue = self.parse_expr()?;
+                                        fields.push((fname, fvalue));
+                                        if self.current == Some(TokenKind::Comma) {
+                                            self.advance();
+                                        } else {
+                                            break;
+                                        }
                                     } else {
                                         break;
                                     }
-                                } else {
-                                    break;
                                 }
+                                self.eat(TokenKind::RCurly)?;
+                                left = Expr::StructLiteral {
+                                    name: name.clone(),
+                                    fields,
+                                };
                             }
-                            self.eat(TokenKind::RCurly)?;
-                            left = Expr::StructLiteral {
-                                name: name.clone(),
-                                fields,
-                            };
                         }
                         _ => {}
                     }

@@ -1,0 +1,9 @@
+// I/O functions
+fn read_file(path):
+    return __rt_wrap_string(__rt_read_file(path))
+
+fn write_file(path, contents):
+    return __rt_write_file(path, contents)
+
+fn exit():
+    __rt_exit(0)

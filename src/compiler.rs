@@ -254,6 +254,9 @@ impl LLVMTextGen {
     ) -> CompileResult<Program> {
         let mut globals = Vec::new();
         let mut functions = Vec::new();
+        let mut enums = program.enums.clone();
+        let mut structs = program.structs.clone();
+        let mut type_aliases = program.type_aliases.clone();
 
         for global in &program.globals {
             match global {
@@ -264,6 +267,9 @@ impl LLVMTextGen {
                     let imported = self.load_module(spec, loaded, active)?;
                     globals.extend(imported.globals);
                     functions.extend(imported.functions);
+                    enums.extend(imported.enums);
+                    structs.extend(imported.structs);
+                    type_aliases.extend(imported.type_aliases);
                 }
                 other => globals.push(other.clone()),
             }
@@ -274,9 +280,9 @@ impl LLVMTextGen {
         Ok(Program {
             globals,
             functions,
-            structs: program.structs.clone(),
-            enums: program.enums.clone(),
-            type_aliases: program.type_aliases.clone(),
+            structs,
+            enums,
+            type_aliases,
             impls: program.impls.clone(),
             profile: program.profile.clone(),
             name: program.name.clone(),
@@ -435,6 +441,7 @@ impl LLVMTextGen {
                     self.collect_calls(&arm.body, calls);
                 }
             }
+            Expr::Try(inner, _) => self.collect_calls(inner, calls),
             Expr::FieldAccess { target, .. } => self.collect_calls(target, calls),
             Expr::FieldAssign { target, value, .. } => {
                 self.collect_calls(target, calls);
@@ -493,7 +500,7 @@ impl LLVMTextGen {
             });
         }
 
-        let path = self.resolve_module_path(spec);
+        let path = self.resolve_module_path(spec)?;
         let code = fs::read_to_string(&path).map_err(|e| {
             CompileError::new(format!("failed to read import '{}': {}", path.display(), e))
         })?;
@@ -518,11 +525,15 @@ impl LLVMTextGen {
                 )
             })?;
         let resolved = self.flatten_program_inner(&program, loaded, active)?;
-        let prefix_source = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or(spec);
-        let mangled = self.mangle_program(resolved, &self.sanitize_ir_name(prefix_source));
+        let prefix_source = if self.is_stdlib_module(spec) {
+            self.sanitize_ir_name(spec)
+        } else {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or(spec)
+                .to_string()
+        };
+        let mangled = self.mangle_program(resolved, &prefix_source);
         active.pop();
         loaded.insert(spec.to_string());
         Ok(mangled)
@@ -761,58 +772,29 @@ impl LLVMTextGen {
     }
 
     fn is_stdlib_module(&self, spec: &str) -> bool {
-        matches!(spec, "std" | "stdlib") || spec == "std/std" || spec.starts_with("std/")
+        spec == "std" || spec.starts_with("std/")
     }
 
-    fn resolve_module_path(&self, spec: &str) -> PathBuf {
-        if self.is_stdlib_module(spec) {
-            // 1) honor explicit env var override
-            if let Ok(val) = std::env::var("RIGHTON_STDLIB_PATH") {
-                let p = PathBuf::from(&val);
-                if p.is_file() {
-                    return p;
-                }
-                // If it's a directory, try common locations
-                let mut try_dir = p.clone();
-                try_dir.push("stdlib");
-                try_dir.push("std.ro");
-                if try_dir.exists() {
-                    return try_dir;
-                }
-                let mut try_file = p.clone();
-                try_file.push("std.ro");
-                if try_file.exists() {
-                    return try_file;
-                }
-            }
+    fn resolve_module_path(&self, spec: &str) -> CompileResult<PathBuf> {
+        if spec == "std" {
+            return Err(CompileError::new(
+                "`import std` is no longer supported. Use explicit imports like `import std.string`, `import std.list`, `import std.math`, `import std.io`, `import std.collections`, `import std.option`, or `import std.result`.",
+            ));
+        }
 
-            // 2) try executable-relative path (next to the exe or in an adjacent `stdlib` folder)
-            if let Ok(exe_path) = std::env::current_exe()
-                && let Some(dir) = exe_path.parent()
-            {
-                let candidate = dir.join("stdlib").join("std.ro");
-                if candidate.exists() {
-                    return candidate;
-                }
-                let candidate2 = dir.join("std.ro");
-                if candidate2.exists() {
-                    return candidate2;
-                }
+        if let Some(module) = spec.strip_prefix("std/") {
+            let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            path.push("stdlib");
+            path.push("std");
+            path.push(format!("{}.ro", module));
+            if path.exists() {
+                return Ok(path);
             }
-
-            // 3) try current working directory
-            let cwd_candidate = std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join("stdlib")
-                .join("std.ro");
-            if cwd_candidate.exists() {
-                return cwd_candidate;
-            }
-
-            // 4) final fallback: compile-time manifest directory (keeps dev behavior)
-            let mut bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            bundled.push("stdlib/std.ro");
-            return bundled;
+            return Err(CompileError::new(format!(
+                "stdlib module '{}' not found at {}",
+                module,
+                path.display()
+            )));
         }
 
         let path = if spec.ends_with(".ro") || spec.ends_with(".ron") {
@@ -823,13 +805,14 @@ impl LLVMTextGen {
             PathBuf::from(format!("{}.ro", spec.replace('.', "/")))
         };
 
-        if path.is_absolute() {
+        let path = if path.is_absolute() {
             path
         } else {
             std::env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join(path)
-        }
+        };
+        Ok(path)
     }
 
     fn build_function_sigs(&self, program: &Program) -> HashMap<String, &'static str> {
@@ -887,7 +870,7 @@ impl LLVMTextGen {
         let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
         for (i, p) in func.params.iter().enumerate() {
             let param_type = if let Some(Some(t)) = func.param_types.get(i) {
-                Self::type_str_to_type(t)
+                self.type_str_to_type(t)
             } else {
                 self.infer_param_type(&func.body, p, &func.params)
             };
@@ -950,7 +933,7 @@ impl LLVMTextGen {
         let mut locals: HashMap<String, (Type, String, bool)> = HashMap::new();
         for (i, param) in func.params.iter().enumerate() {
             let param_type = if let Some(Some(t)) = func.param_types.get(i) {
-                Self::type_str_to_type(t)
+                self.type_str_to_type(t)
             } else {
                 self.infer_param_type(&func.body, param, &func.params)
             };
@@ -1055,12 +1038,18 @@ impl LLVMTextGen {
         }
     }
 
-    fn type_str_to_type(t: &str) -> Type {
+    fn type_str_to_type(&self, t: &str) -> Type {
         match t {
             "i32" => Type::I32,
             "f64" | "double" | "float" => Type::F64,
             "str" | "string" | "ptr" => Type::String,
-            _ => Type::I32,
+            _ => {
+                if self.enum_defs.iter().any(|e| e.name == t) {
+                    Type::Enum(t.to_string())
+                } else {
+                    Type::I32
+                }
+            }
         }
     }
 
@@ -1172,6 +1161,37 @@ impl LLVMTextGen {
                 } else {
                     "void"
                 }
+            }
+            Expr::Try(inner, _) => {
+                let enum_name = if let Expr::EnumLiteral { enum_name, .. } = inner.as_ref() {
+                    Some(enum_name.clone())
+                } else if let Expr::Identifier(name, _) = inner.as_ref() {
+                    if let Some((Type::Enum(enum_name), _, _)) = locals.get(name) {
+                        Some(enum_name.clone())
+                    } else if params.contains(name) {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some(enum_name) = enum_name {
+                    let edef = self.enum_defs.iter().find(|e| e.name == enum_name);
+                    if let Some(e) = edef {
+                        let success = e.variants.iter().find(|v| v.name == "Some" || v.name == "Ok");
+                        if let Some(v) = success {
+                            if let Some(ft) = v.fields.first() {
+                                return match ft.as_str() {
+                                    "i32" | "bool" => "i32",
+                                    "f64" | "float" | "double" => "double",
+                                    _ => "i8*",
+                                };
+                            }
+                        }
+                    }
+                }
+                "i8*"
             }
             Expr::Identifier(name, _) => {
                 if let Some((typ, _, _)) = locals.get(name) {
@@ -2802,7 +2822,7 @@ impl LLVMTextGen {
                 locals_for.insert(
                     variable.clone(),
                     (
-                        Self::type_str_to_type(&elem_type),
+                        self.type_str_to_type(&elem_type),
                         var_alloca.clone(),
                         false,
                     ),
@@ -3380,7 +3400,58 @@ impl LLVMTextGen {
                     writeln!(&mut self.functions, "{}:", end_label).unwrap();
                 }
             }
-
+            Expr::Try(inner, _) => {
+                let enum_ptr = self.next_temp();
+                self.generate_ptr_expr(inner, params, locals, &enum_ptr)?;
+                let disc_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    disc_ptr, enum_ptr
+                )
+                .unwrap();
+                let disc_val = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    disc_val, disc_ptr
+                )
+                .unwrap();
+                let is_success = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp eq i32 %{}, 0",
+                    is_success, disc_val
+                )
+                .unwrap();
+                let success_label = self.next_block_label("try_success");
+                let fail_label = self.next_block_label("try_fail");
+                if let Some(func_name) = &self.current_function {
+                    if let Some(ret_ty) = self.function_sigs.get(func_name) {
+                        writeln!(
+                            &mut self.functions,
+                            "  br i1 %{}, label %{}, label %{}",
+                            is_success, success_label, fail_label
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", fail_label).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  ret {} %{}",
+                            ret_ty, enum_ptr
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", success_label).unwrap();
+                    } else {
+                        writeln!(
+                            &mut self.functions,
+                            "  br i1 %{}, label %{}, label %{}",
+                            is_success, success_label, fail_label
+                        )
+                        .unwrap();
+                    }
+                }
+            }
             Expr::AssignIndex { name, index, value } => {
                 let _var_type = match locals.get(name) {
                     Some((t, _, _)) => t.clone(),
@@ -4023,6 +4094,88 @@ impl LLVMTextGen {
                 }
                 .unwrap();
                 Ok(Val::Reg(res))
+            }
+            Expr::Try(inner, _) => {
+                let enum_ptr = self.next_temp();
+                self.generate_ptr_expr(inner, params, locals, &enum_ptr)?;
+                let disc_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    disc_ptr, enum_ptr
+                )
+                .unwrap();
+                let disc_val = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    disc_val, disc_ptr
+                )
+                .unwrap();
+                let is_success = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp eq i32 %{}, 0",
+                    is_success, disc_val
+                )
+                .unwrap();
+                let success_label = self.next_block_label("try_success");
+                let fail_label = self.next_block_label("try_fail");
+                if let Some(func_name) = &self.current_function {
+                    if let Some(ret_ty) = self.function_sigs.get(func_name) {
+                        writeln!(
+                            &mut self.functions,
+                            "  br i1 %{}, label %{}, label %{}",
+                            is_success, success_label, fail_label
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", fail_label).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  ret {} %{}",
+                            ret_ty, enum_ptr
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", success_label).unwrap();
+                    } else {
+                        writeln!(
+                            &mut self.functions,
+                            "  br i1 %{}, label %{}, label %{}",
+                            is_success, success_label, fail_label
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", fail_label).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  ret i8* %{}",
+                            enum_ptr
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", success_label).unwrap();
+                    }
+                }
+                let payload_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 4",
+                    payload_ptr, enum_ptr
+                )
+                .unwrap();
+                let typed_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    typed_ptr, payload_ptr
+                )
+                .unwrap();
+                let payload = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    payload, typed_ptr
+                )
+                .unwrap();
+                Ok(Val::Reg(payload))
             }
             Expr::Match { expr, arms } => {
                 let match_val = self.generate_int_expr(expr, params, locals)?;
@@ -4950,6 +5103,88 @@ impl LLVMTextGen {
                 .unwrap();
                 Ok(Val::Reg(loaded))
             }
+            Expr::Try(inner, _) => {
+                let enum_ptr = self.next_temp();
+                self.generate_ptr_expr(inner, params, locals, &enum_ptr)?;
+                let disc_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to i32*",
+                    disc_ptr, enum_ptr
+                )
+                .unwrap();
+                let disc_val = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    disc_val, disc_ptr
+                )
+                .unwrap();
+                let is_success = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp eq i32 %{}, 0",
+                    is_success, disc_val
+                )
+                .unwrap();
+                let success_label = self.next_block_label("try_success");
+                let fail_label = self.next_block_label("try_fail");
+                if let Some(func_name) = &self.current_function {
+                    if let Some(ret_ty) = self.function_sigs.get(func_name) {
+                        writeln!(
+                            &mut self.functions,
+                            "  br i1 %{}, label %{}, label %{}",
+                            is_success, success_label, fail_label
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", fail_label).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  ret {} %{}",
+                            ret_ty, enum_ptr
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", success_label).unwrap();
+                    } else {
+                        writeln!(
+                            &mut self.functions,
+                            "  br i1 %{}, label %{}, label %{}",
+                            is_success, success_label, fail_label
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", fail_label).unwrap();
+                        writeln!(
+                            &mut self.functions,
+                            "  ret i8* %{}",
+                            enum_ptr
+                        )
+                        .unwrap();
+                        writeln!(&mut self.functions, "{}:", success_label).unwrap();
+                    }
+                }
+                let payload_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = getelementptr i8, i8* %{}, i32 4",
+                    payload_ptr, enum_ptr
+                )
+                .unwrap();
+                let typed_ptr = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = bitcast i8* %{} to double*",
+                    typed_ptr, payload_ptr
+                )
+                .unwrap();
+                let payload = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load double, double* %{}",
+                    payload, typed_ptr
+                )
+                .unwrap();
+                Ok(Val::Reg(payload))
+            }
             _ => Err(CompileError::new(format!(
                 "unexpected expression in float-context: {:?}",
                 expr
@@ -5011,103 +5246,6 @@ impl LLVMTextGen {
             result, len, len, array_id
         )
         .unwrap();
-    }
-
-    fn emit_print_arg(
-        &mut self,
-        arg: &Expr,
-        params: &[String],
-        locals: &HashMap<String, (Type, String, bool)>,
-        result: &str,
-    ) -> CompileResult<()> {
-        match arg {
-            Expr::StringLiteral(s, _) | Expr::MultilineString(s, _) => {
-                let id = self.emit_string_const(s);
-                let ptr = self.next_temp();
-                self.emit_gep(&id, s.len() + 1, &ptr);
-                let len = s.len();
-                let cap = s.len() + 1;
-                writeln!(&mut self.functions, "  %{} = alloca %String", result).unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  %{}.ptr = getelementptr %String, %String* %{}, i32 0, i32 0",
-                    result, result
-                )
-                .unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  store i8* %{}, i8** %{}.ptr",
-                    ptr, result
-                )
-                .unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  %{}.len = getelementptr %String, %String* %{}, i32 0, i32 1",
-                    result, result
-                )
-                .unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  store i32 {}, i32* %{}.len",
-                    len, result
-                )
-                .unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  %{}.cap = getelementptr %String, %String* %{}, i32 0, i32 2",
-                    result, result
-                )
-                .unwrap();
-                writeln!(
-                    &mut self.functions,
-                    "  store i32 {}, i32* %{}.cap",
-                    cap, result
-                )
-                .unwrap();
-            }
-            Expr::Identifier(name, _) => {
-                if let Some((Type::String, alloca, _)) = locals.get(name) {
-                    writeln!(
-                        &mut self.functions,
-                        "  %{} = load %String*, %String** %{}",
-                        result, alloca
-                    )
-                    .unwrap();
-                } else if let Some((Type::Ptr, alloca, _)) = locals.get(name) {
-                    writeln!(
-                        &mut self.functions,
-                        "  %{} = load i8*, i8** %{}",
-                        result, alloca
-                    )
-                    .unwrap();
-                } else if let Some(idx) = params.iter().position(|p| p == name) {
-                    writeln!(
-                        &mut self.functions,
-                        "  %{} = bitcast i8* %arg{} to i8*",
-                        result, idx
-                    )
-                    .unwrap();
-                } else {
-                    return Err(CompileError::new(format!(
-                        "unknown variable: {}{}",
-                        name,
-                        self.suggest_variable(name, params, locals)
-                            .map(|s| format!(" did you mean `{}`?", s))
-                            .unwrap_or_default()
-                    )));
-                }
-            }
-            Expr::Borrow { name, .. } => {
-                self.emit_borrow_ptr(name, params, locals, result)?;
-            }
-            _ => {
-                return Err(CompileError::new(format!(
-                    "print: unsupported argument{}",
-                    self.stdlib_hint("print")
-                )));
-            }
-        }
-        Ok(())
     }
 
     fn generate_ptr_expr(
@@ -5235,7 +5373,49 @@ impl LLVMTextGen {
             }
             Expr::FString(elements, _) => self.emit_fstring(elements, params, locals, result)?,
             Expr::Borrow { name, .. } => self.emit_borrow_ptr(name, params, locals, result)?,
-            Expr::Identifier(_, _) => self.emit_print_arg(expr, params, locals, result)?,
+            Expr::Identifier(name, _) => {
+                if let Some((typ, alloca, _)) = locals.get(name) {
+                    match typ {
+                        Type::Ptr => {
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = load i8*, i8** %{}",
+                                result, alloca
+                            )
+                            .unwrap();
+                        }
+                        Type::String => {
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = load %String*, %String** %{}",
+                                result, alloca
+                            )
+                            .unwrap();
+                        }
+                        _ => {
+                            let _ptr = self.next_temp();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = bitcast i8* %{} to i8*",
+                                result, alloca
+                            )
+                            .unwrap();
+                        }
+                    }
+                } else if params.contains(name) {
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = bitcast i8* %{} to i8*",
+                        result, name
+                    )
+                    .unwrap();
+                } else {
+                    return Err(CompileError::new(format!(
+                        "unknown variable: {}",
+                        name
+                    )));
+                }
+            }
             Expr::Call { func, args } => {
                 let ty = self
                     .builtin_return_type(func)
@@ -7346,7 +7526,7 @@ mod tests {
     use crate::parser::Parser;
 
     fn compile_expr(input: &str) -> String {
-        let input = format!("import std\n{}", input);
+        let input = format!("import std.io\n{}", input);
         let mut lexer = Lexer::new(&input);
         let mut parser = Parser::new(&mut lexer);
         let program = parser

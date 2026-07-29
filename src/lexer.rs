@@ -63,6 +63,7 @@ pub enum TokenKind {
     Type,
     Impl,
     DoubleColon,
+    Try,
     Invalid(char),
 }
 
@@ -586,6 +587,7 @@ impl Lexer {
                     "struct" => TokenKind::Struct,
                     "enum" => TokenKind::Enum,
                     "type" => TokenKind::Type,
+                    "try" => TokenKind::Try,
                     _ => TokenKind::Identifier(ident),
                 };
                 Token {

@@ -139,6 +139,7 @@ pub enum Expr {
         expr: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    Try(Box<Expr>, SourceSpan),
     Break,
     Continue,
 }
@@ -178,6 +179,7 @@ impl Expr {
             Expr::ForIn { iterable, .. } => iterable.span(),
             Expr::ForRange { start, .. } => start.span(),
             Expr::Match { expr, .. } => expr.span(),
+            Expr::Try(_, span) => *span,
             Expr::Break | Expr::Continue => SourceSpan::unknown(),
         }
     }

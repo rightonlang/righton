@@ -1,0 +1,22 @@
+// Option type
+enum Option:
+    None
+    Some(i32)
+
+fn option_is_some(opt):
+    match opt {
+        Some(_) : return 1,
+        None : return 0,
+    }
+
+fn option_unwrap(opt):
+    match opt {
+        Some(val) : return val,
+        None : return 0,
+    }
+
+fn option_unwrap_or(opt, default):
+    match opt {
+        Some(val) : return val,
+        None : return default,
+    }

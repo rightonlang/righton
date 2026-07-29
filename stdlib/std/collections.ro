@@ -1,0 +1,27 @@
+// Collections: HashMap
+struct Pair[K, V]:
+    let key: K
+    let value: V
+    let next: Ptr
+
+struct HashMap[K, V]:
+    let buckets: Ptr
+    let len: i32
+    let cap: i32
+
+fn hash_map_new(cap) -> Ptr:
+    let total = cap * 8 + 8
+    let map = __rt_alloc(total)
+    return map
+
+fn hash_map_get(map, key):
+    return 0
+
+fn hash_map_insert(map, key, val):
+    return
+
+fn hash_map_remove(map, key):
+    return 0
+
+fn hash_map_len(map):
+    return 0

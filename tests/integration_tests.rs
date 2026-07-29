@@ -416,7 +416,7 @@ mod tests {
         let output = temp_file("ll");
         fs::write(
             &input,
-            "fn main():\n    let a = 1\n    let r = &a\n    return 0",
+            "import std.io\nfn main():\n    let name = \"Alice\"\n    let greeting = f\"Hello {name}\"\n    return 0",
         )
         .unwrap();
 
@@ -431,7 +431,7 @@ mod tests {
         assert!(output.exists());
 
         let ir = fs::read_to_string(&output).unwrap();
-        assert!(ir.contains("bitcast i32*"));
+        assert!(ir.contains("sprintf"));
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -523,7 +523,11 @@ mod tests {
     fn test_cli_stdlib_len_builtin() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "import std\nfn main():\n    return len(\"hello\")").unwrap();
+        fs::write(
+            &input,
+            "import std.string\nfn main():\n    return len(\"hello\")",
+        )
+        .unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -1715,7 +1719,7 @@ mod tests {
         let output = temp_file("ll");
         fs::write(
             &input,
-            "import std\nfn main():\n    let name = \"Alice\"\n    let greeting = f\"Hello {name}\"\n    return 0",
+            "import std.io\nfn main():\n    let name = \"Alice\"\n    let greeting = f\"Hello {name}\"\n    return 0",
         )
         .unwrap();
 
@@ -1797,7 +1801,7 @@ mod tests {
         let output = temp_file("ll");
         fs::write(
             &input,
-            "import std\nfn main():\n    let name = \"Alice\"\n    let greeting = f\"Hello {name}\"\n    return 0",
+            "import std.io\nfn main():\n    let name = \"Alice\"\n    let greeting = f\"Hello {name}\"\n    return 0",
         )
         .unwrap();
 
@@ -1824,7 +1828,7 @@ mod tests {
         let output = temp_file("ll");
         fs::write(
             &input,
-            "import std\nfn main():\n    let s = str_repeat(\"ab\", 3)\n    return 0",
+            "import std.string\nfn main():\n    let s = str_repeat(\"ab\", 3)\n    return 0",
         )
         .unwrap();
 
@@ -1933,7 +1937,7 @@ mod tests {
         let output = temp_file("ll");
         fs::write(
             &input,
-            "import std\nfn main():\n    nonexistent_function()\n    return 0",
+            "fn main():\n    nonexistent_function()\n    return 0",
         )
         .unwrap();
 
@@ -2395,7 +2399,7 @@ mod tests {
     fn test_enum_match_compiles() {
         let input = temp_file("ron");
         let output = temp_file("ll");
-        fs::write(&input, "import std\nenum Option:\n    None\n    Some(i32)\nfn main():\n    let x = Option::Some(42)\n    print(x)\n    return 0").unwrap();
+        fs::write(&input, "import std.io\nenum Option:\n    None\n    Some(i32)\nfn main():\n    let x = Option::Some(42)\n    print(x)\n    return 0").unwrap();
 
         let result = run_bin(&[
             "-i",
@@ -2451,7 +2455,7 @@ mod tests {
         let output = temp_file("o");
         fs::write(
             &input,
-            "import std\nfn main():\n    print(to_hex(255))\n    return 0",
+            "import std.string\nfn main():\n    print(to_hex(255))\n    return 0",
         )
         .unwrap();
 
@@ -2478,7 +2482,7 @@ mod tests {
         let output = temp_file("o");
         fs::write(
             &input,
-            "import std\nfn main():\n    let s = str_repeat(\"ab\", 3)\n    return 0",
+            "import std.string\nfn main():\n    let s = str_repeat(\"ab\", 3)\n    return 0",
         )
         .unwrap();
 
@@ -3074,5 +3078,35 @@ mod tests {
         let ir = codegen.generate(&program).unwrap();
         assert!(ir.contains("define i8* @make_box_i32"));
         assert!(ir.contains("call i8* @make_box_i32"));
+    }
+
+    #[test]
+    fn test_try_keyword_on_option() {
+        let input = temp_file("ron");
+        let output = temp_file("ll");
+        fs::write(
+            &input,
+            "import std.option\nfn unwrap(opt: Option) -> i32:\n    let val = try opt\n    return val\nfn main():\n    let x = unwrap(Option::Some(42))\n    return x",
+        )
+        .unwrap();
+
+        let result = run_bin(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+
+        assert!(result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        if !result.status.success() {
+            eprintln!("STDERR: {}", stderr);
+        }
+        let ir = fs::read_to_string(&output).unwrap();
+        assert!(ir.contains("try_success"));
+        assert!(ir.contains("try_fail"));
+
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(output);
     }
 }

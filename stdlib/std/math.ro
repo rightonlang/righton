@@ -1,0 +1,64 @@
+// Math functions
+fn abs(n):
+    if n < 0:
+        return -n
+    return n
+
+fn abs_f(n):
+    return __rt_abs(n)
+
+fn floor(n):
+    return __rt_floor(n)
+
+fn ceil(n):
+    return __rt_ceil(n)
+
+fn round(n):
+    return __rt_round(n)
+
+fn sqrt(n):
+    return __rt_sqrt(n)
+
+fn sin(n):
+    return __rt_sin(n)
+
+fn cos(n):
+    return __rt_cos(n)
+
+fn tan(n):
+    return __rt_tan(n)
+
+fn min(a, b):
+    if a < b:
+        return a
+    return b
+
+fn max(a, b):
+    if a > b:
+        return a
+    return b
+
+fn pow(base, exp):
+    return base ** exp
+
+fn clamp(value, min_val, max_val):
+    if value < min_val:
+        return min_val
+    if value > max_val:
+        return max_val
+    return value
+
+fn sign(n):
+    if n < 0:
+        return -1
+    if n > 0:
+        return 1
+    return 0
+
+fn powi(base, exp):
+    let result = 1
+    let i = 0
+    while i < exp:
+        result = result * base
+        i = i + 1
+    return result

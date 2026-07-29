@@ -258,6 +258,10 @@ impl TypeEnv {
                 .collect();
             return Type::Struct(base.to_string(), args);
         }
+        if let Some(_edef) = self.enums.iter().find(|e| e.name == current) {
+            eprintln!("DEBUG: resolve_type_with_generics found enum: {}", current);
+            return Type::Enum(current);
+        }
         match Type::from_str(&current) {
             Ok(Type::Unknown) => Type::Generic(current),
             Ok(typ) => typ,
@@ -495,34 +499,19 @@ impl TypeChecker {
                 .insert_generic(gp.clone(), Type::Generic(gp.clone()));
         }
 
-        let mut param_types = Vec::new();
-        for expr in &func.body {
-            if let Expr::Let {
-                name,
-                typ,
-                value,
-                is_const: _,
-            } = expr
-                && func.params.contains(name)
-            {
-                let value_type = self.infer_expr(value)?;
-                let annotated = typ
-                    .as_ref()
-                    .map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
-                let final_type = annotated.unwrap_or(value_type);
-                param_types.push(final_type);
-            }
-        }
-
         for (i, param) in func.params.iter().enumerate() {
             let typ = if param == "self" {
                 if let Some(ref struct_name) = self.self_struct_type {
                     Type::Struct(struct_name.clone(), Vec::new())
+                } else if let Some(Some(t)) = func.param_types.get(i) {
+                    self.env.resolve_type(t, self.self_struct_type.as_deref())
                 } else {
-                    param_types.get(i).cloned().unwrap_or(Type::I32)
+                    self.infer_param_type_from_body(func, param)
                 }
+            } else if let Some(Some(t)) = func.param_types.get(i) {
+                self.env.resolve_type(t, self.self_struct_type.as_deref())
             } else {
-                param_types.get(i).cloned().unwrap_or(Type::I32)
+                self.infer_param_type_from_body(func, param)
             };
             self.env.insert_param(param.clone(), typ);
         }
@@ -556,6 +545,28 @@ impl TypeChecker {
         }
 
         Ok(())
+    }
+
+    fn infer_param_type_from_body(&mut self, func: &FunctionDef, param: &str) -> Type {
+        let mut inferred = Type::I32;
+        for expr in &func.body {
+            if let Expr::Let {
+                name,
+                typ,
+                value,
+                is_const: _,
+            } = expr
+                && name == param
+            {
+                let value_type = self.infer_expr(value).unwrap_or(Type::I32);
+                let annotated = typ
+                    .as_ref()
+                    .map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
+                inferred = annotated.unwrap_or(value_type);
+                break;
+            }
+        }
+        inferred
     }
 
     fn infer_expr(&mut self, expr: &Expr) -> TypeResult<Type> {
@@ -813,6 +824,23 @@ impl TypeChecker {
                     }
                 }
                 Ok(ret_type)
+            }
+            Expr::Try(inner, _) => {
+                let inner_type = self.infer_expr(inner)?;
+                if let Type::Enum(enum_name) = &inner_type {
+                    let edef = self.env.enums.iter().find(|e| &e.name == enum_name);
+                    if let Some(e) = edef {
+                        let success_variant = e.variants.iter().find(|v| {
+                            v.name == "Some" || v.name == "Ok"
+                        });
+                        if let Some(v) = success_variant {
+                            if let Some(field_type_str) = v.fields.first() {
+                                return Ok(Type::from_str(field_type_str).unwrap_or(Type::Unknown));
+                            }
+                        }
+                    }
+                }
+                Err(TypeError::new("try can only be used on Option or Result types"))
             }
             Expr::Break | Expr::Continue => Ok(Type::Void),
             Expr::FieldAccess { target, field } => {
@@ -1354,6 +1382,10 @@ impl TypeChecker {
                 for arm in arms {
                     self.check_expr(&arm.body)?;
                 }
+                Ok(Type::Void)
+            }
+            Expr::Try(inner, _) => {
+                self.check_expr(inner)?;
                 Ok(Type::Void)
             }
             Expr::Break | Expr::Continue => Ok(Type::Void),

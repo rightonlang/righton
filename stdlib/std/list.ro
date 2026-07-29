@@ -1,0 +1,26 @@
+// List functions
+fn list_len(lst):
+    return __rt_list_len(lst)
+
+fn list_push(lst, val):
+    return __rt_list_push(lst, val)
+
+fn list_pop(lst):
+    return __rt_list_pop(lst)
+
+fn list_free(lst):
+    __rt_free(lst)
+
+fn list_get(lst, index):
+    let len = list_len(lst)
+    if index < 0 or index >= len:
+        return 0
+    // __rt_list_get would be implemented in runtime
+    return 0
+
+fn list_set(lst, index, val):
+    let len = list_len(lst)
+    if index < 0 or index >= len:
+        return
+    // __rt_list_set would be implemented in runtime
+    return
