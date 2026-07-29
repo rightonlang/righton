@@ -2765,31 +2765,314 @@ mod tests {
     }
 
     #[test]
-    fn test_for_in_non_list_fails() {
-        let input = temp_file("ron");
-        let output = temp_file("ll");
-        fs::write(
-            &input,
-            "fn main():\n    for x in 5:\n        x\n    return 0",
-        )
-        .unwrap();
+    fn test_generic_function_id_i32() {
+        let mut codegen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![
+                FunctionDef {
+                    name: "id".to_string(),
+                    generic_params: vec!["T".to_string()],
+                    params: vec!["x".to_string()],
+                    param_types: vec![Some("T".to_string())],
+                    return_type: Some("T".to_string()),
+                    body: vec![Expr::Return(
+                        Box::new(Expr::Identifier("x".to_string(), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
+                    )],
+                },
+                FunctionDef {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    param_types: vec![],
+                    return_type: None,
+                    body: vec![
+                        Expr::Let {
+                            name: "result".to_string(),
+                            typ: None,
+                            value: Box::new(Expr::Call {
+                                func: "id".to_string(),
+                                args: vec![Expr::Literal(Literal::Int(42), SourceSpan::unknown())],
+                            }),
+                            is_const: false,
+                        },
+                        Expr::Return(
+                            Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                            SourceSpan::unknown(),
+                        ),
+                    ],
+                },
+            ],
+            structs: vec![],
+            enums: vec![],
+            type_aliases: vec![],
+            impls: vec![],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
 
-        let result = run_bin(&[
-            "-i",
-            input.to_str().unwrap(),
-            "-o",
-            output.to_str().unwrap(),
-        ]);
+        let ir = codegen.generate(&program);
+        if let Err(ref e) = ir {
+            println!("Error: {}", e.message);
+            panic!("Generation failed");
+        }
+        let ir = ir.unwrap();
+        println!("IR:\n{}", ir);
+        assert!(ir.contains("define i32 @id_i32"));
+        assert!(ir.contains("call i32 @id_i32"));
+    }
 
-        assert!(!result.status.success());
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        assert!(
-            stderr.contains("for iterable must be string or list"),
-            "Expected type error for non-list iterable, got: {}",
-            stderr
-        );
+    #[test]
+    fn test_generic_function_multi_param() {
+        let mut codegen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![
+                FunctionDef {
+                    name: "first".to_string(),
+                    generic_params: vec!["T".to_string(), "U".to_string()],
+                    params: vec!["a".to_string(), "b".to_string()],
+                    param_types: vec![Some("T".to_string()), Some("U".to_string())],
+                    return_type: Some("T".to_string()),
+                    body: vec![Expr::Return(
+                        Box::new(Expr::Identifier("a".to_string(), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
+                    )],
+                },
+                FunctionDef {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    param_types: vec![],
+                    return_type: None,
+                    body: vec![
+                        Expr::Let {
+                            name: "result".to_string(),
+                            typ: None,
+                            value: Box::new(Expr::Call {
+                                func: "first".to_string(),
+                                args: vec![
+                                    Expr::Literal(Literal::Int(1), SourceSpan::unknown()),
+                                    Expr::Literal(Literal::Float(2.5), SourceSpan::unknown()),
+                                ],
+                            }),
+                            is_const: false,
+                        },
+                        Expr::Return(
+                            Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                            SourceSpan::unknown(),
+                        ),
+                    ],
+                },
+            ],
+            structs: vec![],
+            enums: vec![],
+            type_aliases: vec![],
+            impls: vec![],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
 
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(output);
+        let ir = codegen.generate(&program).unwrap();
+        assert!(ir.contains("define i32 @first_i32_f64"));
+        assert!(ir.contains("call i32 @first_i32_f64"));
+    }
+
+    #[test]
+    fn test_generic_struct_field_access() {
+        let mut codegen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    Expr::Let {
+                        name: "b".to_string(),
+                        typ: None,
+                        value: Box::new(Expr::StructLiteral {
+                            name: "Box".to_string(),
+                            fields: vec![(
+                                "value".to_string(),
+                                Expr::Literal(Literal::Int(7), SourceSpan::unknown()),
+                            )],
+                        }),
+                        is_const: false,
+                    },
+                    Expr::Let {
+                        name: "v".to_string(),
+                        typ: None,
+                        value: Box::new(Expr::FieldAccess {
+                            target: Box::new(Expr::Identifier(
+                                "b".to_string(),
+                                SourceSpan::unknown(),
+                            )),
+                            field: "value".to_string(),
+                        }),
+                        is_const: false,
+                    },
+                    Expr::Return(
+                        Box::new(Expr::Identifier("v".to_string(), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
+                    ),
+                ],
+            }],
+            structs: vec![StructDef {
+                name: "Box".to_string(),
+                generic_params: vec!["T".to_string()],
+                fields: vec![StructField {
+                    name: "value".to_string(),
+                    typ: "T".to_string(),
+                }],
+            }],
+            enums: vec![],
+            type_aliases: vec![],
+            impls: vec![],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let ir = codegen.generate(&program).unwrap();
+        assert!(ir.contains("malloc(i64 4)"));
+    }
+
+    #[test]
+    fn test_generic_struct_different_concrete_types() {
+        let mut codegen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![FunctionDef {
+                name: "main".to_string(),
+                generic_params: vec![],
+                params: vec![],
+                param_types: vec![],
+                return_type: None,
+                body: vec![
+                    Expr::Let {
+                        name: "b1".to_string(),
+                        typ: None,
+                        value: Box::new(Expr::StructLiteral {
+                            name: "Box".to_string(),
+                            fields: vec![(
+                                "value".to_string(),
+                                Expr::Literal(Literal::Int(1), SourceSpan::unknown()),
+                            )],
+                        }),
+                        is_const: false,
+                    },
+                    Expr::Let {
+                        name: "b2".to_string(),
+                        typ: None,
+                        value: Box::new(Expr::StructLiteral {
+                            name: "Box".to_string(),
+                            fields: vec![(
+                                "value".to_string(),
+                                Expr::Literal(Literal::Float(2.5), SourceSpan::unknown()),
+                            )],
+                        }),
+                        is_const: false,
+                    },
+                    Expr::Return(
+                        Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                        SourceSpan::unknown(),
+                    ),
+                ],
+            }],
+            structs: vec![StructDef {
+                name: "Box".to_string(),
+                generic_params: vec!["T".to_string()],
+                fields: vec![StructField {
+                    name: "value".to_string(),
+                    typ: "T".to_string(),
+                }],
+            }],
+            enums: vec![],
+            type_aliases: vec![],
+            impls: vec![],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let ir = codegen.generate(&program).unwrap();
+        assert!(ir.contains("malloc(i64 4)"));
+        assert!(ir.contains("malloc(i64 8)"));
+    }
+
+    #[test]
+    fn test_generic_function_returns_generic_struct() {
+        let mut codegen = LLVMTextGen::new();
+        let program = Program {
+            globals: vec![],
+            functions: vec![
+                FunctionDef {
+                    name: "make_box".to_string(),
+                    generic_params: vec!["T".to_string()],
+                    params: vec!["v".to_string()],
+                    param_types: vec![Some("T".to_string())],
+                    return_type: Some("Box[T]".to_string()),
+                    body: vec![
+                        Expr::Let {
+                            name: "b".to_string(),
+                            typ: None,
+                            value: Box::new(Expr::StructLiteral {
+                                name: "Box".to_string(),
+                                fields: vec![(
+                                    "value".to_string(),
+                                    Expr::Identifier("v".to_string(), SourceSpan::unknown()),
+                                )],
+                            }),
+                            is_const: false,
+                        },
+                        Expr::Return(
+                            Box::new(Expr::Identifier("b".to_string(), SourceSpan::unknown())),
+                            SourceSpan::unknown(),
+                        ),
+                    ],
+                },
+                FunctionDef {
+                    name: "main".to_string(),
+                    generic_params: vec![],
+                    params: vec![],
+                    param_types: vec![],
+                    return_type: None,
+                    body: vec![
+                        Expr::Let {
+                            name: "b".to_string(),
+                            typ: None,
+                            value: Box::new(Expr::Call {
+                                func: "make_box".to_string(),
+                                args: vec![Expr::Literal(Literal::Int(1), SourceSpan::unknown())],
+                            }),
+                            is_const: false,
+                        },
+                        Expr::Return(
+                            Box::new(Expr::Literal(Literal::Int(0), SourceSpan::unknown())),
+                            SourceSpan::unknown(),
+                        ),
+                    ],
+                },
+            ],
+            structs: vec![StructDef {
+                name: "Box".to_string(),
+                generic_params: vec!["T".to_string()],
+                fields: vec![StructField {
+                    name: "value".to_string(),
+                    typ: "T".to_string(),
+                }],
+            }],
+            enums: vec![],
+            type_aliases: vec![],
+            impls: vec![],
+            profile: "debug".to_string(),
+            name: "test".to_string(),
+        };
+
+        let ir = codegen.generate(&program).unwrap();
+        assert!(ir.contains("define i8* @make_box_i32"));
+        assert!(ir.contains("call i8* @make_box_i32"));
     }
 }

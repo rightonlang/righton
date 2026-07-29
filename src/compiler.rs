@@ -108,6 +108,7 @@ pub struct LLVMTextGen {
     stdlib_enabled: bool,
     runtime_helpers_emitted: bool,
     monomorphized: HashMap<String, FunctionDef>,
+    monomorphized_structs: HashMap<String, StructDef>,
 
     current_function: Option<String>,
     loop_label_stack: Vec<(String, String)>,
@@ -137,6 +138,7 @@ impl LLVMTextGen {
             stdlib_enabled: false,
             runtime_helpers_emitted: false,
             monomorphized: HashMap::new(),
+            monomorphized_structs: HashMap::new(),
             current_function: None,
             loop_label_stack: Vec::new(),
             flattened_funcs: Vec::new(),
@@ -226,6 +228,10 @@ impl LLVMTextGen {
             if !func.body.is_empty() || func.param_types.iter().all(|t| t.is_none()) {
                 self.generate_function(func)?;
             }
+        }
+        let monomorphized_funcs: Vec<FunctionDef> = self.monomorphized.values().cloned().collect();
+        for func in monomorphized_funcs {
+            self.generate_function(&func)?;
         }
 
         ir.push_str(&self.globals);
@@ -862,7 +868,7 @@ impl LLVMTextGen {
             "f64" | "double" | "float" => "double",
             "str" | "string" | "ptr" => "%String*",
             "void" => "void",
-            _ => "void",
+            _ => "i8*",
         }
     }
 
@@ -1045,7 +1051,7 @@ impl LLVMTextGen {
             "f64" | "double" | "float" => "double",
             "str" | "string" | "ptr" => "%String*",
             "void" => "void",
-            _ => "i32",
+            _ => "i8*",
         }
     }
 
@@ -1132,7 +1138,25 @@ impl LLVMTextGen {
                                 match sf.typ.as_str() {
                                     "i32" | "bool" => return "i32",
                                     "f64" | "float" | "double" => return "double",
-                                    _ => return "i8*",
+                                    _ => {
+                                        let prefix = format!("{}_", sdef.name);
+                                        for msdef in self.monomorphized_structs.values() {
+                                            if msdef.name.starts_with(&prefix) {
+                                                for msf in &msdef.fields {
+                                                    if msf.name == *field {
+                                                        match msf.typ.as_str() {
+                                                            "i32" | "bool" => return "i32",
+                                                            "f64" | "float" | "double" => {
+                                                                return "double";
+                                                            }
+                                                            _ => return "i8*",
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        return "i8*";
+                                    }
                                 }
                             }
                         }
@@ -1176,14 +1200,11 @@ impl LLVMTextGen {
                     "void"
                 }
             }
-            Expr::Call { func, .. } => self
-                .builtin_return_type(func)
-                .or_else(|| {
-                    self.function_sigs
-                        .get(&self.resolve_function_name(func))
-                        .copied()
-                })
-                .unwrap_or("void"),
+            Expr::Call { func, .. } => {
+                let resolved = self.resolve_function_name(func);
+                let sig = self.function_sigs.get(&resolved).copied();
+                self.builtin_return_type(func).or(sig).unwrap_or("void")
+            }
             Expr::Binary(l, op, r, _) => {
                 let is_comparison = matches!(
                     *op,
@@ -1471,6 +1492,47 @@ impl LLVMTextGen {
         }
     }
 
+    fn get_function_call_return_type(
+        &mut self,
+        func: &str,
+        args: &[Expr],
+        params: &[String],
+        locals: &HashMap<String, (Type, String, bool)>,
+    ) -> CompileResult<&'static str> {
+        let resolved = self.resolve_function_name(func);
+        let mut ret_ty = self
+            .builtin_return_type(func)
+            .or_else(|| self.function_sigs.get(&resolved).copied())
+            .unwrap_or("void");
+
+        if let Some(func_def) = self.find_function_def(&resolved)
+            && !func_def.generic_params.is_empty()
+        {
+            let mut concrete_types = Vec::new();
+            for arg in args.iter() {
+                let arg_type = self.infer_expr_type(arg, params, locals);
+                let concrete = match arg_type {
+                    "i32" => Type::I32,
+                    "double" => Type::F64,
+                    "i8*" => Type::Ptr,
+                    "%String*" => Type::String,
+                    _ => Type::Unknown,
+                };
+                concrete_types.push(concrete);
+            }
+            let mangled = self.monomorphize_function(&func_def.clone(), &concrete_types)?;
+            if let Some(mangled_def) = self.monomorphized.get(&mangled) {
+                ret_ty = mangled_def
+                    .return_type
+                    .as_deref()
+                    .map(Self::type_str_to_llvm_ret)
+                    .unwrap_or("void");
+            }
+        }
+
+        Ok(ret_ty)
+    }
+
     fn monomorphize_function(
         &mut self,
         func: &FunctionDef,
@@ -1514,6 +1576,15 @@ impl LLVMTextGen {
             *rt = self.substitute_generic_types(rt, &type_map);
         }
 
+        for param_type in &mut monomorphized.param_types {
+            if let Some(t) = param_type {
+                *param_type = Some(self.resolve_type_name(t));
+            }
+        }
+        if let Some(ref mut rt) = monomorphized.return_type {
+            *rt = self.resolve_type_name(rt);
+        }
+
         let mut new_body = Vec::new();
         for expr in &monomorphized.body {
             new_body.push(self.substitute_expr_generics(expr, &type_map)?);
@@ -1538,9 +1609,63 @@ impl LLVMTextGen {
                 Type::Generic(_) => s.to_string(),
                 _ => s.to_string(),
             }
+        } else if let Some(open) = s.find('[')
+            && s.ends_with(']')
+        {
+            let base = &s[..open];
+            let args_str = &s[open + 1..s.len() - 1];
+            let args: Vec<String> = args_str
+                .split(',')
+                .map(|a| self.substitute_generic_types(a.trim(), type_map))
+                .collect();
+            format!("{}[{}]", base, args.join(", "))
         } else {
             s.to_string()
         }
+    }
+
+    fn monomorphize_struct(
+        &mut self,
+        name: &str,
+        concrete_types: &[Type],
+    ) -> CompileResult<String> {
+        let suffix = concrete_types
+            .iter()
+            .map(Self::type_to_mangled_suffix)
+            .collect::<Vec<_>>()
+            .join("_");
+        let mangled_name = format!("{}_{}", name, suffix);
+
+        if self.monomorphized_structs.contains_key(&mangled_name) {
+            return Ok(mangled_name);
+        }
+
+        let sdef = self.struct_defs.iter().find(|s| s.name == name).cloned();
+        if let Some(mut struct_def) = sdef {
+            if struct_def.generic_params.len() != concrete_types.len() {
+                return Err(CompileError::new(format!(
+                    "struct {} expects {} type parameters, got {}",
+                    name,
+                    struct_def.generic_params.len(),
+                    concrete_types.len()
+                )));
+            }
+
+            let mut type_map: HashMap<String, Type> = HashMap::new();
+            for (param, typ) in struct_def.generic_params.iter().zip(concrete_types.iter()) {
+                type_map.insert(param.clone(), typ.clone());
+            }
+
+            struct_def.name = mangled_name.clone();
+            struct_def.generic_params.clear();
+            for field in &mut struct_def.fields {
+                field.typ = self.substitute_generic_types(&field.typ, &type_map);
+            }
+
+            self.monomorphized_structs
+                .insert(mangled_name.clone(), struct_def);
+        }
+        Ok(mangled_name)
     }
 
     fn substitute_expr_generics(
@@ -1698,6 +1823,30 @@ impl LLVMTextGen {
                     arms: new_arms,
                 })
             }
+            Expr::StructLiteral { name, fields } => {
+                let new_name = if type_map.contains_key(name) {
+                    if let Some(Type::Struct(n)) = type_map.get(name) {
+                        n.clone()
+                    } else {
+                        name.clone()
+                    }
+                } else {
+                    name.clone()
+                };
+                let new_fields = fields
+                    .iter()
+                    .map(|(fname, fval)| {
+                        Ok((
+                            fname.clone(),
+                            self.substitute_expr_generics(fval, type_map)?,
+                        ))
+                    })
+                    .collect::<CompileResult<Vec<_>>>()?;
+                Ok(Expr::StructLiteral {
+                    name: new_name,
+                    fields: new_fields,
+                })
+            }
             _ => Ok(expr.clone()),
         }
     }
@@ -1754,7 +1903,7 @@ impl LLVMTextGen {
                             "i32" => "i32",
                             "f64" | "double" | "float" => "double",
                             "str" | "string" | "ptr" => "%String*",
-                            _ => "i32",
+                            _ => "i8*",
                         }
                     } else {
                         let inferred =
@@ -1770,6 +1919,28 @@ impl LLVMTextGen {
                 }
                 return types;
             }
+        }
+        if let Some(func_def) = self.monomorphized.get(&resolved) {
+            for (i, param) in func_def.params.iter().enumerate() {
+                let param_type = if let Some(Some(t)) = func_def.param_types.get(i) {
+                    match t.as_str() {
+                        "i32" => "i32",
+                        "f64" | "double" | "float" => "double",
+                        "str" | "string" | "ptr" => "%String*",
+                        _ => "i8*",
+                    }
+                } else {
+                    let inferred = self.infer_param_type(&func_def.body, param, &func_def.params);
+                    match inferred {
+                        Type::I32 => "i32",
+                        Type::F64 => "double",
+                        Type::String => "%String*",
+                        _ => "i8*",
+                    }
+                };
+                types.push(param_type);
+            }
+            return types;
         }
         types
     }
@@ -2178,7 +2349,7 @@ impl LLVMTextGen {
                         "i32" => Type::I32,
                         "f64" | "float" => Type::F64,
                         "str" | "string" | "ptr" => Type::String,
-                        _ => return Err(CompileError::new(format!("unsupported type: {}", t))),
+                        _ => Type::Ptr,
                     }
                 } else {
                     let inferred = self.infer_expr_type(value, params, locals);
@@ -2373,7 +2544,10 @@ impl LLVMTextGen {
                     let val = self.generate_int_expr(inner, params, locals)?;
                     writeln!(&mut self.functions, "  ret i32 {}", val.as_str()).unwrap();
                 } else {
-                    return Err(CompileError::new("return: types mismatch"));
+                    return Err(CompileError::new(format!(
+                        "return: types mismatch (got {}, expected {})",
+                        ty, return_ty
+                    )));
                 }
             }
 
@@ -3264,7 +3438,8 @@ impl LLVMTextGen {
                 field,
                 value,
             } => {
-                let struct_defs = self.struct_defs.clone();
+                let mut struct_defs = self.struct_defs.clone();
+                struct_defs.extend(self.monomorphized_structs.values().cloned());
                 let ptr = self.next_temp();
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let target_name = if let Expr::Identifier(id, _) = target.as_ref() {
@@ -3489,14 +3664,7 @@ impl LLVMTextGen {
             Expr::Literal(Literal::Float(n), _) => Ok(Val::ImmFloat(*n)),
             Expr::Literal(Literal::Bool(b), _) => Ok(Val::Imm(if *b { 1 } else { 0 })),
             Expr::Call { func, args } => {
-                let ret_ty = self
-                    .builtin_return_type(func)
-                    .or_else(|| {
-                        self.function_sigs
-                            .get(&self.resolve_function_name(func))
-                            .copied()
-                    })
-                    .unwrap_or("void");
+                let ret_ty = self.get_function_call_return_type(func, args, params, locals)?;
                 if ret_ty != "i32" {
                     return Err(CompileError::new(format!("{} does not return i32", func)));
                 }
@@ -4291,7 +4459,6 @@ impl LLVMTextGen {
                 }
             }
             Expr::FieldAccess { target, field } => {
-                let struct_defs = self.struct_defs.clone();
                 let ptr = self.next_temp();
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let mut offset = 0i32;
@@ -4301,19 +4468,29 @@ impl LLVMTextGen {
                 } else {
                     None
                 };
-                if let Some(ref name) = target_name
-                    && let Some(sdef) = struct_defs.iter().find(|_s| locals.contains_key(name))
-                {
-                    for sf in &sdef.fields {
-                        if sf.name == *field {
-                            field_type = sf.typ.clone();
+                if let Some(ref name) = target_name {
+                    let mut found_sdef = None;
+                    for sdef in self.monomorphized_structs.values() {
+                        if locals.contains_key(name) {
+                            found_sdef = Some(sdef);
                             break;
                         }
-                        offset += match sf.typ.as_str() {
-                            "i32" | "bool" => 4,
-                            "f64" | "float" | "double" => 8,
-                            _ => 8,
-                        };
+                    }
+                    if found_sdef.is_none() {
+                        found_sdef = self.struct_defs.iter().find(|_s| locals.contains_key(name));
+                    }
+                    if let Some(sdef) = found_sdef {
+                        for sf in &sdef.fields {
+                            if sf.name == *field {
+                                field_type = sf.typ.clone();
+                                break;
+                            }
+                            offset += match sf.typ.as_str() {
+                                "i32" | "bool" => 4,
+                                "f64" | "float" | "double" => 8,
+                                _ => 8,
+                            };
+                        }
                     }
                 }
                 if field_type == "i32" || field_type == "bool" {
@@ -4395,14 +4572,7 @@ impl LLVMTextGen {
             Expr::Literal(Literal::Int(n), _) => Ok(Val::ImmFloat(*n as f64)),
             Expr::Literal(Literal::Bool(b), _) => Ok(Val::ImmFloat(if *b { 1.0 } else { 0.0 })),
             Expr::Call { func, args } => {
-                let ret_ty = self
-                    .builtin_return_type(func)
-                    .or_else(|| {
-                        self.function_sigs
-                            .get(&self.resolve_function_name(func))
-                            .copied()
-                    })
-                    .unwrap_or("void");
+                let ret_ty = self.get_function_call_return_type(func, args, params, locals)?;
                 if ret_ty != "double" {
                     return Err(CompileError::new(format!(
                         "{} does not return double",
@@ -5133,8 +5303,49 @@ impl LLVMTextGen {
                 }
             }
             Expr::StructLiteral { name, fields } => {
-                let struct_defs = self.struct_defs.clone();
-                let sdef = struct_defs.iter().find(|s| s.name == *name);
+                let sdef = self.struct_defs.iter().find(|s| s.name == *name);
+                let mut mangled_name = None;
+                if let Some(sdef) = sdef
+                    && !sdef.generic_params.is_empty()
+                {
+                    let mut concrete_types = Vec::new();
+                    for gp in &sdef.generic_params {
+                        if let Some(sf) = sdef.fields.iter().find(|f| f.typ == *gp)
+                            && let Some((_, fval)) =
+                                fields.iter().find(|(fname, _)| fname == &sf.name)
+                        {
+                            let val_type = self.infer_expr_type(fval, params, locals);
+                            let concrete = match val_type {
+                                "i32" => Type::I32,
+                                "double" => Type::F64,
+                                "%String*" => Type::String,
+                                "i8*" => Type::Ptr,
+                                _ => Type::Unknown,
+                            };
+                            concrete_types.push(concrete);
+                        }
+                    }
+                    if !concrete_types.is_empty()
+                        && concrete_types.len() == sdef.generic_params.len()
+                    {
+                        mangled_name = Some(self.monomorphize_struct(name, &concrete_types)?);
+                    }
+                }
+                let mut sdef = if let Some(ref mangled) = mangled_name {
+                    self.monomorphized_structs.get(mangled).cloned()
+                } else {
+                    None
+                };
+                if sdef.is_none() {
+                    sdef = self.struct_defs.iter().find(|s| s.name == *name).cloned();
+                }
+                if sdef.is_none() {
+                    sdef = self
+                        .monomorphized_structs
+                        .values()
+                        .find(|s| s.name == *name)
+                        .cloned();
+                }
                 if let Some(sdef) = sdef {
                     let mut total_size = 0i32;
                     let mut field_data: Vec<(String, i32, String)> = Vec::new();
@@ -5482,7 +5693,8 @@ impl LLVMTextGen {
                 .unwrap();
             }
             Expr::FieldAccess { target, field } => {
-                let struct_defs = self.struct_defs.clone();
+                let mut struct_defs = self.struct_defs.clone();
+                struct_defs.extend(self.monomorphized_structs.values().cloned());
                 let ptr = self.next_temp();
                 self.generate_ptr_expr(target, params, locals, &ptr)?;
                 let mut offset = 0i32;
@@ -5720,14 +5932,7 @@ impl LLVMTextGen {
                 }
             }
             Expr::Call { func, args } => {
-                let ty = self
-                    .builtin_return_type(func)
-                    .or_else(|| {
-                        self.function_sigs
-                            .get(&self.resolve_function_name(func))
-                            .copied()
-                    })
-                    .unwrap_or("void");
+                let ty = self.get_function_call_return_type(func, args, params, locals)?;
                 if ty != "%String*" {
                     return Err(CompileError::new(format!(
                         "{}: expected string-returning function",
@@ -6139,7 +6344,7 @@ impl LLVMTextGen {
         }
 
         let resolved = self.resolve_function_name(func);
-        let ret_ty = self
+        let mut ret_ty = self
             .builtin_return_type(func)
             .or_else(|| self.function_sigs.get(&resolved).copied())
             .ok_or_else(|| {
@@ -6174,10 +6379,17 @@ impl LLVMTextGen {
                 concrete_types.push(concrete);
             }
             let mangled = self.monomorphize_function(&func_def.clone(), &concrete_types)?;
-            call_resolved = mangled;
+            call_resolved = mangled.clone();
+            if let Some(mangled_def) = self.monomorphized.get(&mangled) {
+                ret_ty = mangled_def
+                    .return_type
+                    .as_deref()
+                    .map(Self::type_str_to_llvm_ret)
+                    .unwrap_or("void");
+            }
         }
 
-        let param_types = self.get_function_param_types(func);
+        let param_types = self.get_function_param_types(&call_resolved);
         let mut call_args = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             let expected_type = param_types.get(i).copied().unwrap_or("i32");
