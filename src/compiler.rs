@@ -2517,6 +2517,24 @@ impl LLVMTextGen {
                         let result = self.next_temp();
                         self.generate_ptr_expr(arg, params, locals, &result)?;
                         self.emit_printf_str(&result);
+                    } else if ty == "%String*" {
+                        let result = self.next_temp();
+                        self.generate_string_expr(arg, params, locals, &result)?;
+                        let str_ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                            str_ptr, result
+                        )
+                        .unwrap();
+                        let raw_ptr = self.next_temp();
+                        writeln!(
+                            &mut self.functions,
+                            "  %{} = load i8*, i8** %{}",
+                            raw_ptr, str_ptr
+                        )
+                        .unwrap();
+                        self.emit_printf_str(&raw_ptr);
                     }
                 }
             }
