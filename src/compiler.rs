@@ -1281,11 +1281,15 @@ impl LLVMTextGen {
                 else_branch,
                 ..
             } => {
-                let last_then = then_branch.stmts.last()
+                let last_then = then_branch
+                    .stmts
+                    .last()
                     .map(|e| self.infer_expr_type(e, params, locals))
                     .unwrap_or("void");
                 if let Some(else_block) = else_branch {
-                    let last_else = else_block.stmts.last()
+                    let last_else = else_block
+                        .stmts
+                        .last()
                         .map(|e| self.infer_expr_type(e, params, locals))
                         .unwrap_or("void");
                     if last_then != "void" && last_else != "void" && last_then == last_else {
@@ -2113,8 +2117,7 @@ impl LLVMTextGen {
                 visited: &mut Vec<String>,
                 pt: &dyn Fn(&str, usize) -> Option<&'static str>,
             ) -> bool {
-
-        match expr {
+                match expr {
                     Expr::Call { func, args } => {
                         for (i, arg) in args.iter().enumerate() {
                             if let Expr::Identifier(n, _) = arg {
@@ -4058,7 +4061,10 @@ impl LLVMTextGen {
                     .unwrap();
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
                     let val = self.generate_int_expr(
-                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
+                        then_branch
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
                         params,
                         locals,
                     )?;
@@ -4072,7 +4078,10 @@ impl LLVMTextGen {
                     writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
                     writeln!(&mut self.functions, "{}:", else_label).unwrap();
                     let val = self.generate_int_expr(
-                        else_block.stmts.last().unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
+                        else_block
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
                         params,
                         locals,
                     )?;
@@ -4093,7 +4102,10 @@ impl LLVMTextGen {
                     .unwrap();
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
                     let val = self.generate_int_expr(
-                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
+                        then_branch
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
                         params,
                         locals,
                     )?;
@@ -5070,7 +5082,10 @@ impl LLVMTextGen {
                     .unwrap();
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
                     let val = self.generate_float_expr(
-                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
+                        then_branch
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
                         params,
                         locals,
                     )?;
@@ -5084,7 +5099,10 @@ impl LLVMTextGen {
                     writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
                     writeln!(&mut self.functions, "{}:", else_label).unwrap();
                     let val = self.generate_float_expr(
-                        else_block.stmts.last().unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
+                        else_block
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
                         params,
                         locals,
                     )?;
@@ -5105,7 +5123,10 @@ impl LLVMTextGen {
                     .unwrap();
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
                     let val = self.generate_float_expr(
-                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
+                        then_branch
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
                         params,
                         locals,
                     )?;
@@ -6404,7 +6425,10 @@ impl LLVMTextGen {
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
                     let arm_temp = self.next_temp();
                     self.generate_string_expr(
-                        then_branch.stmts.last().unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
+                        then_branch
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
                         params,
                         locals,
                         &arm_temp,
@@ -6419,7 +6443,10 @@ impl LLVMTextGen {
                     writeln!(&mut self.functions, "{}:", else_label).unwrap();
                     let arm_temp = self.next_temp();
                     self.generate_string_expr(
-                        else_block.stmts.last().unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
+                        else_block
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
                         params,
                         locals,
                         &arm_temp,
@@ -6441,7 +6468,10 @@ impl LLVMTextGen {
                     writeln!(&mut self.functions, "{}:", then_label).unwrap();
                     let arm_temp = self.next_temp();
                     self.generate_string_expr(
-                        then_branch.stmts.last().unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
+                        then_branch
+                            .stmts
+                            .last()
+                            .unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
                         params,
                         locals,
                         &arm_temp,

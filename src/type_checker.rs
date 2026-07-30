@@ -471,9 +471,8 @@ impl TypeChecker {
                     return Ok(body_type);
                 }
             }
-            if let Expr::For { body, .. }
-            | Expr::ForIn { body, .. }
-            | Expr::ForRange { body, .. } = expr
+            if let Expr::For { body, .. } | Expr::ForIn { body, .. } | Expr::ForRange { body, .. } =
+                expr
             {
                 let body_type = self.find_return_in_block(body);
                 if body_type != Type::Void {
@@ -512,9 +511,8 @@ impl TypeChecker {
                     return body_type;
                 }
             }
-            if let Expr::For { body, .. }
-            | Expr::ForIn { body, .. }
-            | Expr::ForRange { body, .. } = expr
+            if let Expr::For { body, .. } | Expr::ForIn { body, .. } | Expr::ForRange { body, .. } =
+                expr
             {
                 let body_type = self.find_return_in_block(body);
                 if body_type != Type::Void {
@@ -652,9 +650,7 @@ impl TypeChecker {
                 Ok(Type::String)
             }
             Expr::Borrow { .. } => Ok(Type::String),
-            Expr::Identifier(name, _) => {
-                Ok(self.env.get(name))
-            }
+            Expr::Identifier(name, _) => Ok(self.env.get(name)),
             Expr::Call { func, args } => self.check_call(func, args),
             Expr::Binary(l, op, r, _) => self.check_binary_op(l, op, r),
             Expr::Unary(op, inner, _) => self.check_unary_op(op, inner),
@@ -1077,9 +1073,8 @@ impl TypeChecker {
                     }
                 }
             }
-            if let Expr::For { body, .. }
-            | Expr::ForIn { body, .. }
-            | Expr::ForRange { body, .. } = expr
+            if let Expr::For { body, .. } | Expr::ForIn { body, .. } | Expr::ForRange { body, .. } =
+                expr
             {
                 let body_type = self.infer_block_type_without_env(body);
                 if body_type != Type::Void {

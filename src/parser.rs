@@ -944,7 +944,8 @@ impl<'a> Parser<'a> {
             {
                 let field_type = if let Some(t) = typ {
                     t
-                } else if let Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) = value.as_ref()
+                } else if let Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) =
+                    value.as_ref()
                 {
                     "str".to_string()
                 } else if let Expr::Literal(Literal::Float(_), _) = value.as_ref() {
@@ -1003,7 +1004,11 @@ impl<'a> Parser<'a> {
                 variants.push(EnumVariant { name: func, fields });
             }
         }
-        Ok(EnumDef { name, generic_params, variants })
+        Ok(EnumDef {
+            name,
+            generic_params,
+            variants,
+        })
     }
 
     fn parse_type_alias(&mut self) -> Result<TypeAlias, ParseError> {
@@ -1154,7 +1159,8 @@ impl<'a> Parser<'a> {
                 Some(TokenKind::DoubleColon) => {
                     let enum_name = name.clone();
                     self.advance();
-                    let variant_name = if let Some(TokenKind::Identifier(v)) = self.current.clone() {
+                    let variant_name = if let Some(TokenKind::Identifier(v)) = self.current.clone()
+                    {
                         self.advance();
                         v
                     } else {

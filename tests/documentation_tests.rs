@@ -125,9 +125,7 @@ mod tests {
 
     #[test]
     fn test_doc_hello_world() {
-        assert_compiles(
-            "import std\nfn main():\n    print(\"Hello, Righton!\")\n    return 0",
-        );
+        assert_compiles("import std\nfn main():\n    print(\"Hello, Righton!\")\n    return 0");
     }
 
     // ========================
@@ -396,9 +394,7 @@ mod tests {
 
     #[test]
     fn test_doc_langref_for_countdown() {
-        assert_compiles(
-            "fn main():\n    for i = 5:\n        i\n    return 0",
-        );
+        assert_compiles("fn main():\n    for i = 5:\n        i\n    return 0");
     }
 
     #[test]
@@ -431,9 +427,7 @@ mod tests {
 
     #[test]
     fn test_doc_langref_borrowing() {
-        assert_compiles(
-            "fn main():\n    let x = 10\n    let r = &x\n    return 0",
-        );
+        assert_compiles("fn main():\n    let x = 10\n    let r = &x\n    return 0");
     }
 
     #[test]
@@ -470,9 +464,7 @@ mod tests {
 
     #[test]
     fn test_doc_borrow_single_owner() {
-        assert_compiles(
-            "fn main():\n    let a = 10\n    let b = a\n    return 0",
-        );
+        assert_compiles("fn main():\n    let a = 10\n    let b = a\n    return 0");
     }
 
     #[test]
@@ -484,9 +476,7 @@ mod tests {
 
     #[test]
     fn test_doc_borrow_mutable_exclusive() {
-        assert_compiles(
-            "fn main():\n    let a = 10\n    let m = &mut a\n    return 0",
-        );
+        assert_compiles("fn main():\n    let a = 10\n    let m = &mut a\n    return 0");
     }
 
     #[test]
@@ -570,9 +560,7 @@ mod tests {
 
     #[test]
     fn test_doc_stdlib_to_string() {
-        assert_compiles(
-            "import std\nfn main():\n    let s = to_string(42)\n    return 0",
-        );
+        assert_compiles("import std\nfn main():\n    let s = to_string(42)\n    return 0");
     }
 
     #[test]
@@ -632,9 +620,7 @@ mod tests {
 
     #[test]
     fn test_doc_chained_comparisons() {
-        assert_compiles(
-            "fn main():\n    let x = 5\n    let result = 0 < x < 10\n    return 0",
-        );
+        assert_compiles("fn main():\n    let x = 5\n    let result = 0 < x < 10\n    return 0");
     }
 
     // ========================
@@ -747,11 +733,7 @@ mod tests {
         let input = temp_dir.join("input.ron");
         let output = temp_dir.join("output.ll");
 
-        fs::write(
-            &math_mod,
-            "fn double(x: i32) -> i32:\n    return x * 2\n",
-        )
-        .unwrap();
+        fs::write(&math_mod, "fn double(x: i32) -> i32:\n    return x * 2\n").unwrap();
         fs::write(
             &input,
             "import std\nimport \"./math.ro\"\n\nfn main():\n    let result = double(5)\n    print(result)\n    return 0\n",
@@ -759,7 +741,12 @@ mod tests {
         .unwrap();
 
         let result = run_bin_in_dir(
-            &["-i", input.to_str().unwrap(), "-o", output.to_str().unwrap()],
+            &[
+                "-i",
+                input.to_str().unwrap(),
+                "-o",
+                output.to_str().unwrap(),
+            ],
             &temp_dir,
         );
 
@@ -804,9 +791,7 @@ mod tests {
 
     #[test]
     fn test_doc_list_float() {
-        assert_compiles(
-            "fn main():\n    let nums = [1.5, 2.5, 3.5]\n    return 0",
-        );
+        assert_compiles("fn main():\n    let nums = [1.5, 2.5, 3.5]\n    return 0");
     }
 
     // ========================
@@ -815,9 +800,7 @@ mod tests {
 
     #[test]
     fn test_doc_while_loop_only() {
-        assert_compiles(
-            "fn main():\n    while 1:\n        return 0",
-        );
+        assert_compiles("fn main():\n    while 1:\n        return 0");
     }
 
     // ========================
@@ -826,9 +809,7 @@ mod tests {
 
     #[test]
     fn test_doc_const_declaration() {
-        assert_compiles(
-            "import std\nfn main():\n    const x = 42\n    print(x)\n    return 0",
-        );
+        assert_compiles("import std\nfn main():\n    const x = 42\n    print(x)\n    return 0");
     }
 
     // ========================
@@ -868,9 +849,6 @@ mod tests {
 
     #[test]
     fn test_doc_continue_outside_loop() {
-        assert_fails(
-            "fn main():\n    continue",
-            "continue outside of loop",
-        );
+        assert_fails("fn main():\n    continue", "continue outside of loop");
     }
 }
