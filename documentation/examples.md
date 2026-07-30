@@ -3,6 +3,8 @@
 ## Hello World
 
 ```text
+import std
+
 fn main():
     print("Hello, Righton!")
     return 0
@@ -11,6 +13,8 @@ fn main():
 ## Variables and Arithmetic
 
 ```text
+import std
+
 fn main():
     let a: i32 = 5
     let b: i32 = 3
@@ -22,6 +26,8 @@ fn main():
 ## Strings and F-Strings
 
 ```text
+import std
+
 fn main():
     let name = "World"
     print(f"Hello {name}")
@@ -31,6 +37,8 @@ fn main():
 ## Multiline Strings
 
 ```text
+import std
+
 fn main():
     let poem = """Roses are red,
 violets are blue,
@@ -45,6 +53,8 @@ and so are you."""
 ### Basic While Loop
 
 ```text
+import std
+
 fn main():
     let counter = 5
     while counter > 0:
@@ -56,6 +66,8 @@ fn main():
 ### While Loop with Break
 
 ```text
+import std
+
 fn main():
     let x = 10
     while x > 0:
@@ -69,6 +81,8 @@ fn main():
 ### While Loop with Continue
 
 ```text
+import std
+
 fn main():
     let x = 5
     while x > 0:
@@ -84,6 +98,8 @@ fn main():
 ### Basic Countdown For Loop
 
 ```text
+import std
+
 fn main():
     for i = 5:
         print(i)
@@ -93,6 +109,8 @@ fn main():
 ### For-In Loop
 
 ```text
+import std
+
 fn main():
     let items = [1, 2, 3]
     for item in items:
@@ -103,6 +121,8 @@ fn main():
 ### For-In-Range Loop
 
 ```text
+import std
+
 fn main():
     for i in 1..5:
         print(i)
@@ -112,6 +132,8 @@ fn main():
 ### For Loop with Break
 
 ```text
+import std
+
 fn main():
     for i = 10:
         if i == 5:
@@ -123,6 +145,8 @@ fn main():
 ### For Loop with Continue
 
 ```text
+import std
+
 fn main():
     for i = 5:
         if i == 3:
@@ -134,6 +158,8 @@ fn main():
 ## Nested Loops
 
 ```text
+import std
+
 fn main():
     for i = 3:
         for j = 3:
@@ -144,6 +170,8 @@ fn main():
 ## Nested Loops with Break
 
 ```text
+import std
+
 fn main():
     for i = 3:
         for j = 3:
@@ -156,6 +184,8 @@ fn main():
 ## Conditionals
 
 ```text
+import std
+
 fn main():
     let x = 10
     if x > 10:
@@ -169,53 +199,46 @@ fn main():
 
 ## Match Expression
 
-```text
-enum Status:
-    Pending
-    Active
-    Done
+Match uses curly braces with comma-separated arms:
 
-fn describe(status: Status) -> str:
-    match status:
-        Pending:
-            "not started"
-        Active:
-            "in progress"
-        Done:
-            "finished"
-        _:
-            "unknown"
+```text
+import std
+
+fn match_example(n: i32) -> i32:
+    return match n { 0: 10, 1: 20, _: 30 }
 
 fn main():
-    let s = Status::Active
-    print(describe(s))
+    print(match_example(1))
     return 0
 ```
 
-```text
-enum Option<T>:
-    Some(T)
-    None
+Match on enum variants uses the unqualified variant name (the variable must be declared in the same function so the type checker can infer the enum type):
 
-fn get_value(opt: Option<i32>) -> i32:
-    match opt:
-        Some(x):
-            x
-        None:
-            0
+```text
+import std
+
+enum Color:
+    Red
+    Green
+    Blue
 
 fn main():
-    let val = Option::Some(42)
-    print(get_value(val))
+    let c = Color::Red
+    let desc = match c { Red: 1, Green: 2, Blue: 3, _: 0 }
+    print(desc)
     return 0
 ```
 
 ## Structs
 
+Struct fields use `let name = default_value` syntax:
+
 ```text
+import std
+
 struct Point:
-    x: i32
-    y: i32
+    let x = 0
+    let y = 0
 
 fn main():
     let p = Point { x: 1, y: 2 }
@@ -228,43 +251,17 @@ fn main():
 ## Enums
 
 ```text
-enum Option<T>:
-    Some(T)
-    None
+import std
 
-fn get_value(opt: Option<i32>) -> i32:
-    match opt:
-        Some(x):
-            x
-        None:
-            0
+enum Option:
+    Some(i32)
+    None
 
 fn main():
     let val = Option::Some(42)
-    print(get_value(val))
+    print(val)
     return 0
 ```
-
-## Impl Blocks
-
-```text
-struct Point:
-    x: i32
-    y: i32
-
-impl Point:
-    fn distance(self) -> f64:
-        return sqrt(self.x * self.x + self.y * self.y)
-
-fn main():
-    let p = Point { x: 3, y: 4 }
-    print(p.distance())  // 5.0
-    return 0
-```
-
-- `impl` blocks attach methods to structs
-- Methods use `self` as the receiver parameter
-- `Self` can be used as a return type annotation
 
 ## Borrowing
 
@@ -272,17 +269,16 @@ fn main():
 fn main():
     let x = 10
     let r = &x
-    print(r)
-
-    let mut y = 20
+    let y = 20
     let m = &mut y
-    print(m)
     return 0
 ```
 
 ## Lists
 
 ```text
+import std
+
 fn main():
     let nums = [1, 2, 3]
     print(nums[0])
@@ -294,6 +290,8 @@ fn main():
 ## Tuples
 
 ```text
+import std
+
 fn main():
     let pair = (1, "hello")
     print(pair.0)
@@ -321,10 +319,12 @@ fn main():
 ```text
 import std
 
-fn sum_up_to(n):
+fn sum_up_to(n) -> i32:
     let sum = 0
-    for i = n:
+    let i = 1
+    while i <= n:
         sum = sum + i
+        i = i + 1
     return sum
 
 fn main():
@@ -339,9 +339,10 @@ fn main():
 import std
 
 fn find_first_even(start, end):
-    for i in start..end:
-        if i % 2 == 0:
-            return i
+    while start < end:
+        if start % 2 == 0:
+            return start
+        start = start + 1
     return 0
 
 fn main():
@@ -353,6 +354,8 @@ fn main():
 ## Generic Function
 
 ```text
+import std
+
 fn identity<T>(x: T) -> T:
     return x
 
@@ -367,6 +370,8 @@ fn main():
 ## Type Aliases
 
 ```text
+import std
+
 type String = str
 type MyInt = i32
 
@@ -385,3 +390,5 @@ fn main():
     let ptr = malloc(100)
     return 0
 ```
+
+## Not Yet Implemented

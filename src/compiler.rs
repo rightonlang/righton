@@ -153,7 +153,11 @@ impl LLVMTextGen {
         self.stdlib_enabled = false;
         self.function_aliases.clear();
         let program = self.flatten_program(program)?;
-        self.flattened_funcs = program.functions.clone();
+        let mut all_funcs = program.functions.clone();
+        for impl_def in &program.impls {
+            all_funcs.extend(impl_def.methods.clone());
+        }
+        self.flattened_funcs = all_funcs;
         self.struct_defs = program.structs.clone();
         self.enum_defs = program.enums.clone();
         self.type_aliases.clear();
@@ -166,7 +170,6 @@ impl LLVMTextGen {
         BorrowChecker::new()
             .check_program(&program)
             .map_err(|e| CompileError::new(e.to_string()))?;
-
         let mut type_checker = TypeChecker::new();
         type_checker.set_function_aliases(self.function_aliases.clone());
         type_checker
@@ -227,6 +230,13 @@ impl LLVMTextGen {
         for func in &program.functions {
             if !func.body.is_empty() || func.param_types.iter().all(|t| t.is_none()) {
                 self.generate_function(func)?;
+            }
+        }
+        for impl_def in &program.impls {
+            for method in &impl_def.methods {
+                if !method.body.is_empty() || method.param_types.iter().all(|t| t.is_none()) {
+                    self.generate_function(method)?;
+                }
             }
         }
         let monomorphized_funcs: Vec<FunctionDef> = self.monomorphized.values().cloned().collect();
@@ -1271,26 +1281,20 @@ impl LLVMTextGen {
                 else_branch,
                 ..
             } => {
-                let then_type = self.find_return_in_exprs(
-                    &then_branch.stmts,
-                    params,
-                    locals,
-                    &self.function_sigs,
-                );
+                let last_then = then_branch.stmts.last()
+                    .map(|e| self.infer_expr_type(e, params, locals))
+                    .unwrap_or("void");
                 if let Some(else_block) = else_branch {
-                    let else_type = self.find_return_in_exprs(
-                        &else_block.stmts,
-                        params,
-                        locals,
-                        &self.function_sigs,
-                    );
-                    if then_type != "void" && else_type != "void" && then_type == else_type {
-                        then_type
+                    let last_else = else_block.stmts.last()
+                        .map(|e| self.infer_expr_type(e, params, locals))
+                        .unwrap_or("void");
+                    if last_then != "void" && last_else != "void" && last_then == last_else {
+                        last_then
                     } else {
                         "void"
                     }
                 } else {
-                    then_type
+                    last_then
                 }
             }
             _ => "void",
@@ -2109,7 +2113,8 @@ impl LLVMTextGen {
                 visited: &mut Vec<String>,
                 pt: &dyn Fn(&str, usize) -> Option<&'static str>,
             ) -> bool {
-                match expr {
+
+        match expr {
                     Expr::Call { func, args } => {
                         for (i, arg) in args.iter().enumerate() {
                             if let Expr::Identifier(n, _) = arg {
@@ -2240,6 +2245,7 @@ impl LLVMTextGen {
         // Fourth: check if param is used in binary expressions (comparison/arithmetic) anywhere
         fn param_in_binary(expr: &Expr, param: &str) -> bool {
             match expr {
+                Expr::Identifier(n, _) => n == param,
                 Expr::Binary(l, _, r, _) => {
                     if let Expr::Identifier(n, _) = l.as_ref()
                         && n == param
@@ -4024,6 +4030,92 @@ impl LLVMTextGen {
                 .unwrap();
                 Ok(Val::Reg(res))
             }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_val = self.generate_int_expr(condition, params, locals)?;
+                let cond_bool = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp ne i32 {}, 0",
+                    cond_bool,
+                    cond_val.as_str()
+                )
+                .unwrap();
+                let result_alloca = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = alloca i32", result_alloca).unwrap();
+                let merge_label = self.next_block_label("ival_merge");
+                let then_label = self.next_block_label("ival_then");
+                if let Some(else_block) = else_branch {
+                    let else_label = self.next_block_label("ival_else");
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, else_label
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let val = self.generate_int_expr(
+                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
+                        params,
+                        locals,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store i32 {}, i32* %{}",
+                        val.as_str(),
+                        result_alloca
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                    writeln!(&mut self.functions, "{}:", else_label).unwrap();
+                    let val = self.generate_int_expr(
+                        else_block.stmts.last().unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
+                        params,
+                        locals,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store i32 {}, i32* %{}",
+                        val.as_str(),
+                        result_alloca
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                } else {
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, merge_label
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let val = self.generate_int_expr(
+                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Int(0), Default::default())),
+                        params,
+                        locals,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store i32 {}, i32* %{}",
+                        val.as_str(),
+                        result_alloca
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                }
+                writeln!(&mut self.functions, "{}:", merge_label).unwrap();
+                let res = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load i32, i32* %{}",
+                    res, result_alloca
+                )
+                .unwrap();
+                Ok(Val::Reg(res))
+            }
             Expr::Match { expr, arms } => {
                 let match_val = self.generate_int_expr(expr, params, locals)?;
                 let match_reg = self.next_temp();
@@ -4950,6 +5042,92 @@ impl LLVMTextGen {
                 .unwrap();
                 Ok(Val::Reg(loaded))
             }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_val = self.generate_int_expr(condition, params, locals)?;
+                let cond_bool = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp ne i32 {}, 0",
+                    cond_bool,
+                    cond_val.as_str()
+                )
+                .unwrap();
+                let result_alloca = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = alloca double", result_alloca).unwrap();
+                let merge_label = self.next_block_label("fval_merge");
+                let then_label = self.next_block_label("fval_then");
+                if let Some(else_block) = else_branch {
+                    let else_label = self.next_block_label("fval_else");
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, else_label
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let val = self.generate_float_expr(
+                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
+                        params,
+                        locals,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store double {}, double* %{}",
+                        val.as_str(),
+                        result_alloca
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                    writeln!(&mut self.functions, "{}:", else_label).unwrap();
+                    let val = self.generate_float_expr(
+                        else_block.stmts.last().unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
+                        params,
+                        locals,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store double {}, double* %{}",
+                        val.as_str(),
+                        result_alloca
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                } else {
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, merge_label
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let val = self.generate_float_expr(
+                        then_branch.stmts.last().unwrap_or(&Expr::Literal(Literal::Float(0.0), Default::default())),
+                        params,
+                        locals,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store double {}, double* %{}",
+                        val.as_str(),
+                        result_alloca
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                }
+                writeln!(&mut self.functions, "{}:", merge_label).unwrap();
+                let res = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load double, double* %{}",
+                    res, result_alloca
+                )
+                .unwrap();
+                Ok(Val::Reg(res))
+            }
             _ => Err(CompileError::new(format!(
                 "unexpected expression in float-context: {:?}",
                 expr
@@ -5553,22 +5731,63 @@ impl LLVMTextGen {
                                 offset += 8;
                             }
                             _ => {
-                                let val_ptr = self.next_temp();
-                                self.generate_ptr_expr(arg, params, locals, &val_ptr)?;
-                                let typed_ptr = self.next_temp();
-                                writeln!(
-                                    &mut self.functions,
-                                    "  %{} = bitcast i8* %{} to i8**",
-                                    typed_ptr, elem_ptr
-                                )
-                                .unwrap();
-                                writeln!(
-                                    &mut self.functions,
-                                    "  store i8* %{}, i8** %{}",
-                                    val_ptr, typed_ptr
-                                )
-                                .unwrap();
-                                offset += 8;
+                                let arg_type = self.infer_expr_type(arg, params, locals);
+                                match arg_type {
+                                    "i32" | "bool" => {
+                                        let val = self.generate_int_expr(arg, params, locals)?;
+                                        let typed_ptr = self.next_temp();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = bitcast i8* %{} to i32*",
+                                            typed_ptr, elem_ptr
+                                        )
+                                        .unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  store i32 {}, i32* %{}",
+                                            val.as_str(),
+                                            typed_ptr
+                                        )
+                                        .unwrap();
+                                        offset += 4;
+                                    }
+                                    "double" => {
+                                        let val = self.generate_float_expr(arg, params, locals)?;
+                                        let typed_ptr = self.next_temp();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = bitcast i8* %{} to double*",
+                                            typed_ptr, elem_ptr
+                                        )
+                                        .unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  store double {}, double* %{}",
+                                            val.as_str(),
+                                            typed_ptr
+                                        )
+                                        .unwrap();
+                                        offset += 8;
+                                    }
+                                    _ => {
+                                        let val_ptr = self.next_temp();
+                                        self.generate_ptr_expr(arg, params, locals, &val_ptr)?;
+                                        let typed_ptr = self.next_temp();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  %{} = bitcast i8* %{} to i8**",
+                                            typed_ptr, elem_ptr
+                                        )
+                                        .unwrap();
+                                        writeln!(
+                                            &mut self.functions,
+                                            "  store i8* %{}, i8** %{}",
+                                            val_ptr, typed_ptr
+                                        )
+                                        .unwrap();
+                                        offset += 8;
+                                    }
+                                }
                             }
                         }
                     }
@@ -5931,6 +6150,100 @@ impl LLVMTextGen {
                     )));
                 }
             }
+            Expr::Match { expr: mexpr, arms } => {
+                let match_val = self.generate_int_expr(mexpr, params, locals)?;
+                let match_reg = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = add i32 {}, 0",
+                    match_reg,
+                    match_val.as_str()
+                )
+                .unwrap();
+                let ptr_storage = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = alloca %String*", ptr_storage).unwrap();
+                let end_label = self.next_block_label("smatch_end");
+                let wildcard_label = arms
+                    .iter()
+                    .position(|a| matches!(a.pattern, crate::ast::MatchPattern::Wildcard))
+                    .map(|_| self.next_block_label("smatch_default"));
+                for (i, arm) in arms.iter().enumerate() {
+                    match &arm.pattern {
+                        crate::ast::MatchPattern::Int(n) => {
+                            let next_label = if i + 1 < arms.len()
+                                && !matches!(
+                                    arms[i + 1].pattern,
+                                    crate::ast::MatchPattern::Wildcard
+                                ) {
+                                self.next_block_label("smatch_next")
+                            } else {
+                                wildcard_label.clone().unwrap_or_else(|| end_label.clone())
+                            };
+                            let cmp = self.next_temp();
+                            writeln!(
+                                &mut self.functions,
+                                "  %{} = icmp eq i32 %{}, {}",
+                                cmp, match_reg, n
+                            )
+                            .unwrap();
+                            let arm_label = self.next_block_label("smatch_arm");
+                            writeln!(
+                                &mut self.functions,
+                                "  br i1 %{}, label %{}, label %{}",
+                                cmp, arm_label, next_label
+                            )
+                            .unwrap();
+                            writeln!(&mut self.functions, "{}:", arm_label).unwrap();
+                            let arm_temp = self.next_temp();
+                            self.generate_string_expr(&arm.body, params, locals, &arm_temp)?;
+                            writeln!(
+                                &mut self.functions,
+                                "  store %String* %{}, %String** %{}",
+                                arm_temp, ptr_storage
+                            )
+                            .unwrap();
+                            writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
+                            if next_label != end_label
+                                && wildcard_label.as_ref() != Some(&next_label)
+                            {
+                                writeln!(&mut self.functions, "{}:", next_label).unwrap();
+                            }
+                        }
+                        crate::ast::MatchPattern::Wildcard => {
+                            if i + 1 < arms.len() {
+                                let arm_temp = self.next_temp();
+                                self.generate_string_expr(&arm.body, params, locals, &arm_temp)?;
+                                writeln!(
+                                    &mut self.functions,
+                                    "  store %String* %{}, %String** %{}",
+                                    arm_temp, ptr_storage
+                                )
+                                .unwrap();
+                                writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
+                            } else if let Some(wl) = &wildcard_label {
+                                writeln!(&mut self.functions, "{}:", wl).unwrap();
+                                let arm_temp = self.next_temp();
+                                self.generate_string_expr(&arm.body, params, locals, &arm_temp)?;
+                                writeln!(
+                                    &mut self.functions,
+                                    "  store %String* %{}, %String** %{}",
+                                    arm_temp, ptr_storage
+                                )
+                                .unwrap();
+                                writeln!(&mut self.functions, "  br label %{}", end_label).unwrap();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                writeln!(&mut self.functions, "{}:", end_label).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load %String*, %String** %{}",
+                    result, ptr_storage
+                )
+                .unwrap();
+            }
             Expr::Call { func, args } => {
                 let ty = self.get_function_call_return_type(func, args, params, locals)?;
                 if ty != "%String*" {
@@ -6061,6 +6374,93 @@ impl LLVMTextGen {
                         "string concatenation requires two strings",
                     ));
                 }
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_val = self.generate_int_expr(condition, params, locals)?;
+                let cond_bool = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = icmp ne i32 {}, 0",
+                    cond_bool,
+                    cond_val.as_str()
+                )
+                .unwrap();
+                let ptr_storage = self.next_temp();
+                writeln!(&mut self.functions, "  %{} = alloca %String*", ptr_storage).unwrap();
+                let merge_label = self.next_block_label("sif_merge");
+                let then_label = self.next_block_label("sif_then");
+                if let Some(else_block) = else_branch {
+                    let else_label = self.next_block_label("sif_else");
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, else_label
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let arm_temp = self.next_temp();
+                    self.generate_string_expr(
+                        then_branch.stmts.last().unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
+                        params,
+                        locals,
+                        &arm_temp,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store %String* %{}, %String** %{}",
+                        arm_temp, ptr_storage
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                    writeln!(&mut self.functions, "{}:", else_label).unwrap();
+                    let arm_temp = self.next_temp();
+                    self.generate_string_expr(
+                        else_block.stmts.last().unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
+                        params,
+                        locals,
+                        &arm_temp,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store %String* %{}, %String** %{}",
+                        arm_temp, ptr_storage
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                } else {
+                    writeln!(
+                        &mut self.functions,
+                        "  br i1 %{}, label %{}, label %{}",
+                        cond_bool, then_label, merge_label
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "{}:", then_label).unwrap();
+                    let arm_temp = self.next_temp();
+                    self.generate_string_expr(
+                        then_branch.stmts.last().unwrap_or(&Expr::StringLiteral(String::new(), Default::default())),
+                        params,
+                        locals,
+                        &arm_temp,
+                    )?;
+                    writeln!(
+                        &mut self.functions,
+                        "  store %String* %{}, %String** %{}",
+                        arm_temp, ptr_storage
+                    )
+                    .unwrap();
+                    writeln!(&mut self.functions, "  br label %{}", merge_label).unwrap();
+                }
+                writeln!(&mut self.functions, "{}:", merge_label).unwrap();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = load %String*, %String** %{}",
+                    result, ptr_storage
+                )
+                .unwrap();
             }
             _ => return Err(CompileError::new("expected string expression")),
         }
@@ -6222,6 +6622,50 @@ impl LLVMTextGen {
             )
             .unwrap();
             return Ok(Some(len_reg));
+        }
+
+        if self.stdlib_enabled && func == "is_empty" {
+            if args.len() != 1 {
+                return Err(CompileError::new("is_empty: expected 1 argument"));
+            }
+            let ptr = self.next_temp();
+            self.generate_string_expr(&args[0], params, locals, &ptr)?;
+            let str_ptr = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                str_ptr, ptr
+            )
+            .unwrap();
+            let raw = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = load i8*, i8** %{}",
+                raw, str_ptr
+            )
+            .unwrap();
+            let len = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = call i32 @__rt_strlen(%String* %{})",
+                len, ptr
+            )
+            .unwrap();
+            let is_empty = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = icmp eq i32 %{}, 0",
+                is_empty, len
+            )
+            .unwrap();
+            let zext = self.next_temp();
+            writeln!(
+                &mut self.functions,
+                "  %{} = zext i1 %{} to i32",
+                zext, is_empty
+            )
+            .unwrap();
+            return Ok(Some(zext));
         }
 
         if self.stdlib_enabled && func == "read_file" {

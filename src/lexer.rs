@@ -98,6 +98,10 @@ impl Lexer {
         self.src.get(self.pos).cloned()
     }
 
+    fn peek_at(&self, offset: usize) -> Option<char> {
+        self.src.get(self.pos + offset).cloned()
+    }
+
     fn next(&mut self) -> Option<char> {
         let c = self.src.get(self.pos).cloned();
         if let Some(ch) = c {
@@ -602,6 +606,10 @@ impl Lexer {
                         num = num * 10.0 + d as f64;
                         self.next();
                     } else if ch == '.' {
+                        // Check if '..' (range operator) - if so, keep as integer
+                        if self.peek_at(1) == Some('.') {
+                            break;
+                        }
                         is_float = true;
                         self.next();
                         let mut decimal = 0.0;

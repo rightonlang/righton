@@ -111,6 +111,7 @@ pub struct Parser<'a> {
     current: Option<TokenKind>,
     current_col: usize,
     errors: Vec<ParseError>,
+    allow_struct_literal: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -122,6 +123,7 @@ impl<'a> Parser<'a> {
             current: Some(first.kind),
             current_col: col,
             errors: Vec::new(),
+            allow_struct_literal: true,
         }
     }
 
@@ -933,8 +935,25 @@ impl<'a> Parser<'a> {
         let block = self.parse_block()?;
         let mut fields = Vec::new();
         for expr in block.stmts {
-            if let Expr::Let { name, typ, .. } = expr {
-                let field_type = typ.unwrap_or_else(|| "i32".to_string());
+            if let Expr::Let {
+                name,
+                typ,
+                value,
+                is_const: _,
+            } = expr
+            {
+                let field_type = if let Some(t) = typ {
+                    t
+                } else if let Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) = value.as_ref()
+                {
+                    "str".to_string()
+                } else if let Expr::Literal(Literal::Float(_), _) = value.as_ref() {
+                    "f64".to_string()
+                } else if let Expr::Literal(Literal::Bool(_), _) = value.as_ref() {
+                    "bool".to_string()
+                } else {
+                    "i32".to_string()
+                };
                 fields.push(StructField {
                     name,
                     typ: field_type,
@@ -955,6 +974,11 @@ impl<'a> Parser<'a> {
             n
         } else {
             return Err(ParseError::new("expected name of the enum"));
+        };
+        let generic_params = if self.current == Some(TokenKind::Less) {
+            self.parse_generic_params()?
+        } else {
+            Vec::new()
         };
         self.eat(TokenKind::Colon)?;
         let block = self.parse_block()?;
@@ -979,7 +1003,7 @@ impl<'a> Parser<'a> {
                 variants.push(EnumVariant { name: func, fields });
             }
         }
-        Ok(EnumDef { name, variants })
+        Ok(EnumDef { name, generic_params, variants })
     }
 
     fn parse_type_alias(&mut self) -> Result<TypeAlias, ParseError> {
@@ -1095,6 +1119,7 @@ impl<'a> Parser<'a> {
             };
 
             let mut right = self.parse_primary()?;
+            right = self.parse_post_primary(right)?;
             let span = left.span();
             let next_min_prec = if Self::is_right_associative(&op_opt) {
                 prec
@@ -1123,9 +1148,270 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
+    fn parse_post_primary(&mut self, mut left: Expr) -> Result<Expr, ParseError> {
+        if let Expr::Identifier(name, _) = &left {
+            match self.current.clone() {
+                Some(TokenKind::DoubleColon) => {
+                    let enum_name = name.clone();
+                    self.advance();
+                    let variant_name = if let Some(TokenKind::Identifier(v)) = self.current.clone() {
+                        self.advance();
+                        v
+                    } else {
+                        return Err(ParseError::with_location(
+                            "expected variant name after '::'",
+                            self.lexer.line,
+                            self.lexer.column,
+                        ));
+                    };
+                    let mut args = Vec::new();
+                    if self.current == Some(TokenKind::LParen) {
+                        self.advance();
+                        while self.current != Some(TokenKind::RParen) {
+                            args.push(self.parse_expr()?);
+                            if self.current == Some(TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.eat(TokenKind::RParen)?;
+                    }
+                    left = Expr::EnumLiteral {
+                        enum_name,
+                        variant_name,
+                        args,
+                    };
+                }
+                Some(TokenKind::Equal) => {
+                    self.advance();
+                    let value = Box::new(self.parse_expr()?);
+                    left = Expr::Assign {
+                        name: name.clone(),
+                        value,
+                    };
+                }
+                Some(TokenKind::PlusEqual) => {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    left = Expr::Assign {
+                        name: name.clone(),
+                        value: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
+                            BinOp::Add,
+                            Box::new(rhs),
+                            SourceSpan::unknown(),
+                        )),
+                    };
+                }
+                Some(TokenKind::MinusEqual) => {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    left = Expr::Assign {
+                        name: name.clone(),
+                        value: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
+                            BinOp::Sub,
+                            Box::new(rhs),
+                            SourceSpan::unknown(),
+                        )),
+                    };
+                }
+                Some(TokenKind::StarEqual) => {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    left = Expr::Assign {
+                        name: name.clone(),
+                        value: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
+                            BinOp::Mul,
+                            Box::new(rhs),
+                            SourceSpan::unknown(),
+                        )),
+                    };
+                }
+                Some(TokenKind::SlashEqual) => {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    left = Expr::Assign {
+                        name: name.clone(),
+                        value: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
+                            BinOp::Div,
+                            Box::new(rhs),
+                            SourceSpan::unknown(),
+                        )),
+                    };
+                }
+                Some(TokenKind::PercentEqual) => {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    left = Expr::Assign {
+                        name: name.clone(),
+                        value: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
+                            BinOp::DivMod,
+                            Box::new(rhs),
+                            SourceSpan::unknown(),
+                        )),
+                    };
+                }
+                Some(TokenKind::StarStarEqual) => {
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    left = Expr::Assign {
+                        name: name.clone(),
+                        value: Box::new(Expr::Binary(
+                            Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
+                            BinOp::Pow,
+                            Box::new(rhs),
+                            SourceSpan::unknown(),
+                        )),
+                    };
+                }
+                Some(TokenKind::LBracket) => {
+                    self.advance();
+                    let index = self.parse_expr()?;
+                    self.eat(TokenKind::RBracket)?;
+                    if self.current == Some(TokenKind::Equal) {
+                        self.advance();
+                        let value = self.parse_expr()?;
+                        left = Expr::AssignIndex {
+                            name: name.clone(),
+                            index: Box::new(index),
+                            value: Box::new(value),
+                        };
+                    } else {
+                        left = Expr::Index {
+                            target: Box::new(left),
+                            index: Box::new(index),
+                        };
+                    }
+                }
+                Some(TokenKind::LParen) => {
+                    self.advance();
+                    let mut args = Vec::new();
+                    while self.current != Some(TokenKind::RParen) {
+                        args.push(self.parse_expr()?);
+                        if self.current == Some(TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.eat(TokenKind::RParen)?;
+                    left = Expr::Call {
+                        func: name.clone(),
+                        args,
+                    };
+                }
+                Some(TokenKind::LCurly) if self.allow_struct_literal => {
+                    self.advance();
+                    let mut fields = Vec::new();
+                    loop {
+                        while self.current == Some(TokenKind::Newline) {
+                            self.advance();
+                        }
+                        if self.current == Some(TokenKind::RCurly) {
+                            break;
+                        }
+                        if let Some(TokenKind::Identifier(fname)) = self.current.clone() {
+                            self.advance();
+                            self.eat(TokenKind::Colon)?;
+                            let fvalue = self.parse_expr()?;
+                            fields.push((fname, fvalue));
+                            if self.current == Some(TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    self.eat(TokenKind::RCurly)?;
+                    left = Expr::StructLiteral {
+                        name: name.clone(),
+                        fields,
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        // Field access / method call / tuple access: receiver.field or receiver.method(args) or tup.0
+        while self.current == Some(TokenKind::Dot) {
+            self.advance();
+            match self.current.clone() {
+                Some(TokenKind::IntLiteral(n)) => {
+                    self.advance();
+                    left = Expr::TupleAccess {
+                        target: Box::new(left),
+                        index: n as usize,
+                    };
+                }
+                Some(TokenKind::Identifier(field)) => {
+                    self.advance();
+                    if self.current == Some(TokenKind::LParen) {
+                        // Method call: receiver.method(args)
+                        let mut args = vec![left];
+                        self.advance();
+                        while self.current != Some(TokenKind::RParen) {
+                            args.push(self.parse_expr()?);
+                            if self.current == Some(TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.eat(TokenKind::RParen)?;
+                        left = Expr::Call { func: field, args };
+                    } else if self.current == Some(TokenKind::Equal) {
+                        // Field assignment: receiver.field = expr
+                        self.advance();
+                        let value = Box::new(self.parse_expr()?);
+                        left = Expr::FieldAssign {
+                            target: Box::new(left),
+                            field,
+                            value,
+                        };
+                    } else {
+                        // Field access: receiver.field
+                        left = Expr::FieldAccess {
+                            target: Box::new(left),
+                            field,
+                        };
+                    }
+                }
+                _ => {
+                    return Err(ParseError::with_location(
+                        "expected field name or tuple index after '.'",
+                        self.lexer.line,
+                        self.lexer.column,
+                    ));
+                }
+            }
+        }
+
+        // Indexing syntax: expr[index]
+        while self.current == Some(TokenKind::LBracket) {
+            self.advance();
+            let index = self.parse_expr()?;
+            self.eat(TokenKind::RBracket)?;
+            left = Expr::Index {
+                target: Box::new(left),
+                index: Box::new(index),
+            };
+        }
+
+        Ok(left)
+    }
+
     fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
         self.eat(TokenKind::Match)?;
+        self.allow_struct_literal = false;
         let expr = Box::new(self.parse_expr()?);
+        self.allow_struct_literal = true;
         self.eat(TokenKind::LCurly)?;
         let mut arms = Vec::new();
         loop {
@@ -1217,6 +1503,9 @@ impl<'a> Parser<'a> {
             Some(TokenKind::Const) | Some(TokenKind::Let) => {
                 let is_const = self.current == Some(TokenKind::Const);
                 self.advance();
+                if !is_const && self.current == Some(TokenKind::Mut) {
+                    self.advance();
+                }
                 let name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
                     self.advance();
                     n
@@ -1269,263 +1558,7 @@ impl<'a> Parser<'a> {
             }
             Some(_tok) => {
                 let mut left = self.parse_primary()?;
-
-                if let Expr::Identifier(name, _) = &left {
-                    match self.current.clone() {
-                        Some(TokenKind::DoubleColon) => {
-                            let enum_name = name.clone();
-                            self.advance();
-                            let variant_name =
-                                if let Some(TokenKind::Identifier(v)) = self.current.clone() {
-                                    self.advance();
-                                    v
-                                } else {
-                                    return Err(ParseError::with_location(
-                                        "expected variant name after '::'",
-                                        self.lexer.line,
-                                        self.lexer.column,
-                                    ));
-                                };
-                            let mut args = Vec::new();
-                            if self.current == Some(TokenKind::LParen) {
-                                self.advance();
-                                while self.current != Some(TokenKind::RParen) {
-                                    args.push(self.parse_expr()?);
-                                    if self.current == Some(TokenKind::Comma) {
-                                        self.advance();
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                self.eat(TokenKind::RParen)?;
-                            }
-                            left = Expr::EnumLiteral {
-                                enum_name,
-                                variant_name,
-                                args,
-                            };
-                        }
-                        Some(TokenKind::Equal) => {
-                            self.advance();
-                            let value = Box::new(self.parse_expr()?);
-                            left = Expr::Assign {
-                                name: name.clone(),
-                                value,
-                            };
-                        }
-                        Some(TokenKind::PlusEqual) => {
-                            self.advance();
-                            let rhs = self.parse_expr()?;
-                            left = Expr::Assign {
-                                name: name.clone(),
-                                value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
-                                    BinOp::Add,
-                                    Box::new(rhs),
-                                    SourceSpan::unknown(),
-                                )),
-                            };
-                        }
-                        Some(TokenKind::MinusEqual) => {
-                            self.advance();
-                            let rhs = self.parse_expr()?;
-                            left = Expr::Assign {
-                                name: name.clone(),
-                                value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
-                                    BinOp::Sub,
-                                    Box::new(rhs),
-                                    SourceSpan::unknown(),
-                                )),
-                            };
-                        }
-                        Some(TokenKind::StarEqual) => {
-                            self.advance();
-                            let rhs = self.parse_expr()?;
-                            left = Expr::Assign {
-                                name: name.clone(),
-                                value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
-                                    BinOp::Mul,
-                                    Box::new(rhs),
-                                    SourceSpan::unknown(),
-                                )),
-                            };
-                        }
-                        Some(TokenKind::SlashEqual) => {
-                            self.advance();
-                            let rhs = self.parse_expr()?;
-                            left = Expr::Assign {
-                                name: name.clone(),
-                                value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
-                                    BinOp::Div,
-                                    Box::new(rhs),
-                                    SourceSpan::unknown(),
-                                )),
-                            };
-                        }
-                        Some(TokenKind::PercentEqual) => {
-                            self.advance();
-                            let rhs = self.parse_expr()?;
-                            left = Expr::Assign {
-                                name: name.clone(),
-                                value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
-                                    BinOp::DivMod,
-                                    Box::new(rhs),
-                                    SourceSpan::unknown(),
-                                )),
-                            };
-                        }
-                        Some(TokenKind::StarStarEqual) => {
-                            self.advance();
-                            let rhs = self.parse_expr()?;
-                            left = Expr::Assign {
-                                name: name.clone(),
-                                value: Box::new(Expr::Binary(
-                                    Box::new(Expr::Identifier(name.clone(), SourceSpan::unknown())),
-                                    BinOp::Pow,
-                                    Box::new(rhs),
-                                    SourceSpan::unknown(),
-                                )),
-                            };
-                        }
-                        Some(TokenKind::LBracket) => {
-                            self.advance();
-                            let index = self.parse_expr()?;
-                            self.eat(TokenKind::RBracket)?;
-                            if self.current == Some(TokenKind::Equal) {
-                                self.advance();
-                                let value = self.parse_expr()?;
-                                left = Expr::AssignIndex {
-                                    name: name.clone(),
-                                    index: Box::new(index),
-                                    value: Box::new(value),
-                                };
-                            } else {
-                                left = Expr::Index {
-                                    target: Box::new(left),
-                                    index: Box::new(index),
-                                };
-                            }
-                        }
-                        Some(TokenKind::LParen) => {
-                            self.advance();
-                            let mut args = Vec::new();
-                            while self.current != Some(TokenKind::RParen) {
-                                args.push(self.parse_expr()?);
-                                if self.current == Some(TokenKind::Comma) {
-                                    self.advance();
-                                } else {
-                                    break;
-                                }
-                            }
-                            self.eat(TokenKind::RParen)?;
-                            left = Expr::Call {
-                                func: name.clone(),
-                                args,
-                            };
-                        }
-                        Some(TokenKind::LCurly) => {
-                            self.advance();
-                            let mut fields = Vec::new();
-                            loop {
-                                while self.current == Some(TokenKind::Newline) {
-                                    self.advance();
-                                }
-                                if self.current == Some(TokenKind::RCurly) {
-                                    break;
-                                }
-                                if let Some(TokenKind::Identifier(fname)) = self.current.clone() {
-                                    self.advance();
-                                    self.eat(TokenKind::Colon)?;
-                                    let fvalue = self.parse_expr()?;
-                                    fields.push((fname, fvalue));
-                                    if self.current == Some(TokenKind::Comma) {
-                                        self.advance();
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            self.eat(TokenKind::RCurly)?;
-                            left = Expr::StructLiteral {
-                                name: name.clone(),
-                                fields,
-                            };
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Field access / method call / tuple access: receiver.field or receiver.method(args) or tup.0
-                while self.current == Some(TokenKind::Dot) {
-                    self.advance();
-                    match self.current.clone() {
-                        Some(TokenKind::IntLiteral(n)) => {
-                            self.advance();
-                            left = Expr::TupleAccess {
-                                target: Box::new(left),
-                                index: n as usize,
-                            };
-                        }
-                        Some(TokenKind::Identifier(field)) => {
-                            self.advance();
-                            if self.current == Some(TokenKind::LParen) {
-                                // Method call: receiver.method(args)
-                                let mut args = vec![left];
-                                self.advance();
-                                while self.current != Some(TokenKind::RParen) {
-                                    args.push(self.parse_expr()?);
-                                    if self.current == Some(TokenKind::Comma) {
-                                        self.advance();
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                self.eat(TokenKind::RParen)?;
-                                left = Expr::Call { func: field, args };
-                            } else if self.current == Some(TokenKind::Equal) {
-                                // Field assignment: receiver.field = expr
-                                self.advance();
-                                let value = Box::new(self.parse_expr()?);
-                                left = Expr::FieldAssign {
-                                    target: Box::new(left),
-                                    field,
-                                    value,
-                                };
-                            } else {
-                                // Field access: receiver.field
-                                left = Expr::FieldAccess {
-                                    target: Box::new(left),
-                                    field,
-                                };
-                            }
-                        }
-                        _ => {
-                            return Err(ParseError::with_location(
-                                "expected field name or tuple index after '.'",
-                                self.lexer.line,
-                                self.lexer.column,
-                            ));
-                        }
-                    }
-                }
-
-                // Indexing syntax: expr[index]
-                while self.current == Some(TokenKind::LBracket) {
-                    self.advance();
-                    let index = self.parse_expr()?;
-                    self.eat(TokenKind::RBracket)?;
-                    left = Expr::Index {
-                        target: Box::new(left),
-                        index: Box::new(index),
-                    };
-                }
-
+                left = self.parse_post_primary(left)?;
                 self.parse_binary(left, 0)
             }
             _ => Err(ParseError::with_location(
