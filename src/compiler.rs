@@ -2525,13 +2525,15 @@ impl LLVMTextGen {
                             &mut self.functions,
                             "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
                             str_ptr, result
-                        ).unwrap();
+                        )
+                        .unwrap();
                         let raw_ptr = self.next_temp();
                         writeln!(
                             &mut self.functions,
                             "  %{} = load i8*, i8** %{}",
                             raw_ptr, str_ptr
-                        ).unwrap();
+                        )
+                        .unwrap();
                         self.emit_printf_str(&raw_ptr);
                     }
                 }
