@@ -244,7 +244,15 @@ impl BorrowChecker {
             Expr::Match { expr, arms } => {
                 self.visit_expr(expr)?;
                 for arm in arms {
+                    let saved = self.bindings.clone();
+                    if let crate::ast::MatchPattern::Variant { bindings, .. } = &arm.pattern {
+                        for b in bindings {
+                            self.bindings
+                                .insert(b.clone(), Binding::new(BindingKind::Copy));
+                        }
+                    }
                     self.visit_expr(&arm.body)?;
+                    self.bindings = saved;
                 }
                 Ok(())
             }

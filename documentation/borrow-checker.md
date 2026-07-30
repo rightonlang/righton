@@ -1,6 +1,8 @@
 
 # Righton Borrow Checker (Simplified Design)
 
+> **Note**: This document describes the *intended* borrow-checking design. Code examples are illustrative and may not exactly match current syntax. In Righton, all variables are mutable by default (`let mut` is accepted but ignored).
+
 ## Overview
 
 This document describes a simplified borrow checking system for the Righton language.  

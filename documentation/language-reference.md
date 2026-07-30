@@ -32,10 +32,10 @@ const name = "Righton"
 x = 12
 ```
 
-- `let` declares a mutable variable
+- `let` declares a mutable variable (all variables are mutable; `let mut` is accepted but ignored)
 - `const` declares an immutable variable
 - Type annotations are optional
-- Supported type names include `i32`, `f64`, `float`, `str`, `string`, `ptr`, and user-defined struct/enum names
+- Supported type names include `i32`, `f64`, `float`, `str` (requires `import std`), `string` (requires `import std`), `ptr`, and user-defined struct/enum names
 
 ## Functions
 
@@ -93,7 +93,7 @@ else:
 
 - `if` expressions can include `elif` and `else` blocks
 - Nested `if` chains are supported
-- `if` is an expression and can return values
+- `if` can be used as a value expression: `let x = if cond: 1 else: 2`
 
 ### While Loops
 
@@ -162,28 +162,26 @@ while x > 0:
 ### Match Expression
 
 ```text
-match value:
-    0:
-        "zero"
-    1:
-        "one"
-    _:
-        "other"
+match value { 0: "zero", 1: "one", _: "other" }
 ```
 
-- `match` expressions support integer patterns, wildcard `_`, and enum variants
-- Enum variants can have bindings: `Some(x): ...`
+- Match uses curly braces `{ }` with comma-separated `pattern: body` arms
+- Supports integer patterns, wildcard `_`, and enum variants
+- Enum variants use the unqualified variant name: `Red: 1, Blue: 2, _: 0`
+- Enum variants with data use parenthesized bindings: `Some(x): x + 1`
+- Match arms must all return the same type
+- Match expressions support both integer and string return types
 
 ## Structs
 
 ```text
 struct Point:
-    x: i32
-    y: i32
+    let x = 0
+    let y = 0
 ```
 
 - Structs are defined with `struct Name:`
-- Fields have optional type annotations
+- Fields use `let name = default_value` syntax (the default value sets the field type)
 - Generics are supported: `struct Box<T>:`
 
 ### Struct Usage
@@ -219,16 +217,15 @@ impl Point:
         return sqrt(self.x * self.x + self.y * self.y)
 ```
 
-- `impl` blocks attach methods to structs
-- Methods use `self` as the receiver parameter
-- `Self` can be used as a return type annotation
+- Methods are called via `instance.method(args)` which desugars to `method(instance, args)`
+- The `self` parameter is treated as the struct type inside the method body
 
 ## Borrowing
 
 ```text
 let x = 10
 let r = &x          // immutable borrow
-let m = &mut x      // mutable borrow (x must be mutable)
+let m = &mut x      // mutable borrow
 ```
 
 - `&name` creates an immutable borrow

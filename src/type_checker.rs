@@ -63,7 +63,7 @@ impl Type {
     }
 
     pub fn can_compare(&self) -> bool {
-        matches!(self, Type::I32 | Type::F64 | Type::Bool)
+        matches!(self, Type::I32 | Type::F64 | Type::Bool | Type::String)
     }
 }
 
@@ -257,6 +257,12 @@ impl TypeEnv {
                 .map(|a| self.resolve_type_with_generics(a.trim(), generics, self_struct))
                 .collect();
             return Type::Struct(base.to_string(), args);
+        }
+        if self.structs.iter().any(|s| s.name == current) {
+            return Type::Struct(current, Vec::new());
+        }
+        if self.enums.iter().any(|e| e.name == current) {
+            return Type::Enum(current);
         }
         match Type::from_str(&current) {
             Ok(Type::Unknown) => Type::Generic(current),
@@ -459,6 +465,20 @@ impl TypeChecker {
                     }
                 }
             }
+            if let Expr::While { body, .. } = expr {
+                let body_type = self.find_return_in_block(body);
+                if body_type != Type::Void {
+                    return Ok(body_type);
+                }
+            }
+            if let Expr::For { body, .. } | Expr::ForIn { body, .. } | Expr::ForRange { body, .. } =
+                expr
+            {
+                let body_type = self.find_return_in_block(body);
+                if body_type != Type::Void {
+                    return Ok(body_type);
+                }
+            }
         }
         Ok(Type::Void)
     }
@@ -485,6 +505,20 @@ impl TypeChecker {
                     }
                 }
             }
+            if let Expr::While { body, .. } = expr {
+                let body_type = self.find_return_in_block(body);
+                if body_type != Type::Void {
+                    return body_type;
+                }
+            }
+            if let Expr::For { body, .. } | Expr::ForIn { body, .. } | Expr::ForRange { body, .. } =
+                expr
+            {
+                let body_type = self.find_return_in_block(body);
+                if body_type != Type::Void {
+                    return body_type;
+                }
+            }
         }
         Type::Void
     }
@@ -495,7 +529,7 @@ impl TypeChecker {
                 .insert_generic(gp.clone(), Type::Generic(gp.clone()));
         }
 
-        let mut param_types = Vec::new();
+        let mut param_types: Vec<Option<Type>> = (0..func.params.len()).map(|_| None).collect();
         for expr in &func.body {
             if let Expr::Let {
                 name,
@@ -503,26 +537,28 @@ impl TypeChecker {
                 value,
                 is_const: _,
             } = expr
-                && func.params.contains(name)
+                && let Some(idx) = func.params.iter().position(|p| p == name)
             {
                 let value_type = self.infer_expr(value)?;
                 let annotated = typ
                     .as_ref()
                     .map(|t| self.env.resolve_type(t, self.self_struct_type.as_deref()));
                 let final_type = annotated.unwrap_or(value_type);
-                param_types.push(final_type);
+                param_types[idx] = Some(final_type);
             }
         }
 
         for (i, param) in func.params.iter().enumerate() {
-            let typ = if param == "self" {
+            let typ = if let Some(t) = func.param_types.get(i).and_then(|t| t.as_ref()) {
+                self.env.resolve_type(t, self.self_struct_type.as_deref())
+            } else if param == "self" {
                 if let Some(ref struct_name) = self.self_struct_type {
                     Type::Struct(struct_name.clone(), Vec::new())
                 } else {
-                    param_types.get(i).cloned().unwrap_or(Type::I32)
+                    param_types[i].clone().unwrap_or(Type::I32)
                 }
             } else {
-                param_types.get(i).cloned().unwrap_or(Type::I32)
+                param_types[i].clone().unwrap_or(Type::I32)
             };
             self.env.insert_param(param.clone(), typ);
         }
@@ -788,7 +824,11 @@ impl TypeChecker {
                                     )));
                                 }
                                 for (i, binding) in bindings.iter().enumerate() {
-                                    let field_type = Type::from_str(&v.fields[i]).unwrap();
+                                    let field_type = self.env.resolve_type_with_generics(
+                                        &v.fields[i],
+                                        &self.env.generics,
+                                        self.self_struct_type.as_deref(),
+                                    );
                                     self.env.insert_local(binding.clone(), field_type);
                                 }
                             } else {
@@ -951,8 +991,33 @@ impl TypeChecker {
             Expr::StringLiteral(_, _) | Expr::MultilineString(_, _) | Expr::FString(_, _) => {
                 Type::String
             }
+            Expr::Identifier(_, _) => Type::I32,
             Expr::List(_) => Type::String,
             Expr::Index { .. } => Type::I32,
+            Expr::Binary(l, _, r, _) => {
+                let lt = self.infer_expr_without_env(l);
+                let rt = self.infer_expr_without_env(r);
+                if lt == Type::F64 || rt == Type::F64 {
+                    Type::F64
+                } else {
+                    Type::I32
+                }
+            }
+            Expr::Unary(_, inner, _) => self.infer_expr_without_env(inner),
+            Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let then_type = self.infer_block_type_without_env(then_branch);
+                if let Some(else_block) = else_branch {
+                    let else_type = self.infer_block_type_without_env(else_block);
+                    if else_type != Type::Void {
+                        return else_type;
+                    }
+                }
+                then_type
+            }
             Expr::Match { arms, .. } => {
                 if let Some(first) = arms.first() {
                     self.infer_expr_without_env(&first.body)
@@ -978,8 +1043,46 @@ impl TypeChecker {
                 }
             }
             Expr::TupleAccess { .. } => Type::I32,
+            Expr::FieldAccess { .. } => Type::I32,
+            Expr::StructLiteral { .. } => Type::String,
             _ => Type::Void,
         }
+    }
+
+    fn infer_block_type_without_env(&self, block: &Block) -> Type {
+        for expr in &block.stmts {
+            if let Expr::Return(inner, _) = expr {
+                return self.infer_expr_without_env(inner);
+            }
+        }
+        for expr in &block.stmts {
+            if let Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } = expr
+            {
+                let then_type = self.infer_block_type_without_env(then_branch);
+                if then_type != Type::Void {
+                    return then_type;
+                }
+                if let Some(else_block) = else_branch {
+                    let else_type = self.infer_block_type_without_env(else_block);
+                    if else_type != Type::Void {
+                        return else_type;
+                    }
+                }
+            }
+            if let Expr::For { body, .. } | Expr::ForIn { body, .. } | Expr::ForRange { body, .. } =
+                expr
+            {
+                let body_type = self.infer_block_type_without_env(body);
+                if body_type != Type::Void {
+                    return body_type;
+                }
+            }
+        }
+        Type::Void
     }
 
     fn infer_block_type(&self, block: &Block) -> Type {
@@ -1100,6 +1203,14 @@ impl TypeChecker {
                 )));
             }
 
+            if l_type != r_type && !(l_type.can_arith() && r_type.can_arith()) {
+                return Err(TypeError::new(format!(
+                    "cannot compare values of type {} and {}",
+                    self.type_name(&l_type),
+                    self.type_name(&r_type)
+                )));
+            }
+
             return Ok(Type::I32);
         }
 
@@ -1131,7 +1242,7 @@ impl TypeChecker {
 
         match op {
             UnaryOp::Not => {
-                if !inner_type.can_compare() {
+                if !matches!(inner_type, Type::I32 | Type::F64 | Type::Bool) {
                     return Err(TypeError::new(format!(
                         "cannot apply not to type {}",
                         self.type_name(&inner_type)
