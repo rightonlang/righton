@@ -808,11 +808,27 @@ impl<'a> Parser<'a> {
             param_types,
             return_type,
             body: block.stmts,
+            cpp_name: None,
         })
     }
 
     fn parse_extern_function(&mut self) -> Result<FunctionDef, ParseError> {
         self.eat(TokenKind::Extern)?;
+
+        // Check for optional linkage specifier: extern "c++" fn ...
+        let mut cpp_name: Option<String> = None;
+        if let Some(TokenKind::StringLiteral(ref lang)) = self.current {
+            if lang == "c++" {
+                // Will use the function name as-is (mangled C++ name)
+            } else {
+                return Err(ParseError::new(format!(
+                    "unsupported extern linkage: \"{}\"",
+                    lang
+                )));
+            }
+            self.advance();
+        }
+
         self.eat(TokenKind::Fn)?;
 
         let name = if let Some(TokenKind::Identifier(n)) = self.current.clone() {
@@ -821,6 +837,10 @@ impl<'a> Parser<'a> {
         } else {
             return Err(ParseError::new("expected name of the external function"));
         };
+
+        if cpp_name.is_some() {
+            cpp_name = Some(name.clone());
+        }
 
         let generic_params = if self.current == Some(TokenKind::Less) {
             self.parse_generic_params()?
@@ -865,6 +885,7 @@ impl<'a> Parser<'a> {
             param_types,
             return_type,
             body: Vec::new(),
+            cpp_name,
         })
     }
 
@@ -1586,15 +1607,35 @@ impl<'a> Parser<'a> {
                     elements.push(Expr::StringLiteral(buf.clone(), SourceSpan::unknown()));
                     buf.clear();
                 }
-                let mut var_name = String::new();
+                let mut inner = String::new();
+                let mut depth = 0;
                 while let Some(&ch) = chars.peek() {
                     chars.next();
-                    if ch == '}' {
-                        break;
+                    if ch == '{' {
+                        depth += 1;
+                        inner.push(ch);
+                    } else if ch == '}' {
+                        if depth == 0 {
+                            break;
+                        } else {
+                            depth -= 1;
+                            inner.push(ch);
+                        }
+                    } else {
+                        inner.push(ch);
                     }
-                    var_name.push(ch);
                 }
-                elements.push(Expr::Identifier(var_name, SourceSpan::unknown()));
+                let trimmed = inner.trim();
+                if !trimmed.is_empty() {
+                    // Try to parse inner as expression; fallback to identifier if fails
+                    let mut lexer = crate::lexer::Lexer::new(trimmed);
+                    let mut parser = Parser::new(&mut lexer);
+                    if let Ok(expr) = parser.parse_expr() {
+                        elements.push(expr);
+                    } else {
+                        elements.push(Expr::Identifier(trimmed.to_string(), SourceSpan::unknown()));
+                    }
+                }
             } else {
                 buf.push(c);
             }

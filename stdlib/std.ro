@@ -107,9 +107,45 @@ fn max(a, b):
         return a
     return b
 
+fn exp(n: f64) -> f64:
+    return __rt_exp(n)
+
+fn log(n: f64) -> f64:
+    return __rt_log(n)
+
+fn tanh(n: f64) -> f64:
+    return __rt_tanh(n)
+
+fn rand() -> i32:
+    return __rt_rand()
+
+fn rand_float() -> f64:
+    return __rt_rand_float()
+
+fn srand(seed: i32):
+    __rt_srand(seed)
+
 // Free-standing functions
 fn pow(base, exp):
     return base ** exp
+
+fn sigmoid(x: f64) -> f64:
+    // numerically stable sigmoid using exp
+    if x < 0.0:
+        let e = __rt_exp(x)
+        return e / (1.0 + e)
+    else:
+        return 1.0 / (1.0 + __rt_exp(-x))
+
+fn relu(x: f64) -> f64:
+    if x > 0.0:
+        return x
+    return 0.0
+
+fn relu_deriv(x: f64) -> f64:
+    if x > 0.0:
+        return 1.0
+    return 0.0
 
 // I/O
 fn read_line():
@@ -133,3 +169,12 @@ fn list_pop(lst):
 
 fn list_free(lst):
     __rt_free(lst)
+
+fn list_push_f64(lst, val: f64):
+    return __rt_list_push_f64(lst, val)
+
+fn list_get_f64(lst, idx: i32):
+    return __rt_list_get_f64(lst, idx)
+
+fn list_set_f64(lst, idx: i32, val: f64):
+    __rt_list_set_f64(lst, idx, val)

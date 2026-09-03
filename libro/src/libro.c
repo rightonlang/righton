@@ -347,6 +347,80 @@ double __rt_abs(double n) {
     return n < 0 ? -n : n;
 }
 
+double __rt_exp(double n) { return exp(n); }
+double __rt_log(double n) { return log(n); }
+double __rt_tanh(double n) { return tanh(n); }
+
+int32_t __rt_rand(void) { return (int32_t)rand(); }
+double __rt_rand_float(void) { return (double)rand() / (double)RAND_MAX; }
+void __rt_srand(int32_t seed) { srand((unsigned int)seed); }
+
+// Float list helpers: reuse same header layout { cap i32, len i32, data... } but elem_size=8
+void* __rt_list_push_f64(void *list, double val) {
+    if (!list) {
+        int32_t cap = 4;
+        size_t total = 8 + (size_t)cap * 8;
+        void *newlist = malloc(total);
+        if (!newlist) return NULL;
+        ((int32_t*)newlist)[0] = cap;
+        ((int32_t*)newlist)[1] = 0;
+        list = newlist;
+    }
+    int32_t *header = (int32_t*)list;
+    int32_t cap = header[0];
+    int32_t len = header[1];
+    if (len >= cap) {
+        int32_t newcap = cap * 2;
+        if (newcap == 0) newcap = 4;
+        size_t old_total = 8 + (size_t)cap * 8;
+        size_t new_total = 8 + (size_t)newcap * 8;
+        void *newlist = malloc(new_total);
+        if (!newlist) return list;
+        memcpy(newlist, list, old_total);
+        free(list);
+        list = newlist;
+        header = (int32_t*)list;
+        header[0] = newcap;
+    }
+    char *base = (char*)list;
+    double *elem = (double*)(base + 8 + (size_t)len * 8);
+    *elem = val;
+    header[1] = len + 1;
+    return list;
+}
+
+double __rt_list_get_f64(void *list, int32_t index) {
+    if (!list) return 0.0;
+    int32_t *header = (int32_t*)list;
+    int32_t len = header[1];
+    if (index < 0 || index >= len) return 0.0;
+    char *base = (char*)list;
+    double *elem = (double*)(base + 8 + (size_t)index * 8);
+    return *elem;
+}
+
+void __rt_list_set_f64(void *list, int32_t index, double val) {
+    if (!list) return;
+    int32_t *header = (int32_t*)list;
+    int32_t len = header[1];
+    if (index < 0 || index >= len) return;
+    char *base = (char*)list;
+    double *elem = (double*)(base + 8 + (size_t)index * 8);
+    *elem = val;
+}
+
+int32_t __rt_list_pop_f64(void *list, double *out) {
+    if (!list) return 0;
+    int32_t *header = (int32_t*)list;
+    int32_t len = header[1];
+    if (len <= 0) return 0;
+    char *base = (char*)list;
+    double *elem = (double*)(base + 8 + (size_t)(len - 1) * 8);
+    if (out) *out = *elem;
+    header[1] = len - 1;
+    return 1;
+}
+
 // Legacy raw C-string helpers kept for IR that still calls with i8*.
 // They simply forward to the typed versions by wrapping.
 int32_t __rt_strlen_raw_compat(RoString *s) { return __rt_strlen(s); }

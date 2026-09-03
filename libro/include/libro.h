@@ -63,6 +63,18 @@ double  __rt_sin(double n);
 double  __rt_cos(double n);
 double  __rt_tan(double n);
 double  __rt_abs(double n);
+double  __rt_exp(double n);
+double  __rt_log(double n);
+double  __rt_tanh(double n);
+int32_t __rt_rand(void);
+double  __rt_rand_float(void);
+void    __rt_srand(int32_t seed);
+
+// ---- float list helpers ----
+void*   __rt_list_push_f64(void *list, double val);
+double  __rt_list_get_f64(void *list, int32_t index);
+void    __rt_list_set_f64(void *list, int32_t index, double val);
+int32_t __rt_list_pop_f64(void *list, double *out);
 
 // For internal IR helpers that historically took raw i8* (C string):
 // Provide raw variant so old IR `call @__rt_strlen(i8*)` still links

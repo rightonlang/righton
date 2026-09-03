@@ -217,6 +217,7 @@ pub struct FunctionDef {
     pub param_types: Vec<Option<String>>,
     pub return_type: Option<String>,
     pub body: Vec<Expr>,
+    pub cpp_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -443,6 +443,12 @@ impl TypeChecker {
         if func.name == "main" {
             return Ok(Type::I32);
         }
+        if let Some(ret_str) = &func.return_type {
+            let t = self.env.resolve_type(ret_str, self.self_struct_type.as_deref());
+            if t != Type::Void && t != Type::Unknown {
+                return Ok(t);
+            }
+        }
 
         for expr in &func.body {
             if let Expr::Return(inner, _) = expr {
@@ -1158,9 +1164,12 @@ impl TypeChecker {
             | "__rt_to_string_int"
             | "__rt_to_string_float" => return Some(Type::String),
             "__rt_to_float" | "__rt_floor" | "__rt_ceil" | "__rt_round" | "__rt_sqrt"
-            | "__rt_sin" | "__rt_cos" | "__rt_tan" | "__rt_abs" => return Some(Type::F64),
-            "__rt_list_len" | "__rt_list_pop" => return Some(Type::I32),
-            "__rt_list_push" => return Some(Type::String),
+            | "__rt_sin" | "__rt_cos" | "__rt_tan" | "__rt_abs" | "__rt_exp"
+            | "__rt_log" | "__rt_tanh" => return Some(Type::F64),
+            "__rt_rand_float" | "__rt_list_get_f64" => return Some(Type::F64),
+            "__rt_rand" | "__rt_list_len" | "__rt_list_pop" => return Some(Type::I32),
+            "__rt_srand" | "__rt_list_set_f64" => return Some(Type::Void),
+            "__rt_list_push" | "__rt_list_push_f64" => return Some(Type::String),
             "__rt_to_hex" | "__rt_str_repeat" => return Some(Type::String),
             _ => {}
         }
@@ -1178,7 +1187,9 @@ impl TypeChecker {
                 Some(Type::String)
             }
             "to_float" | "floor" | "ceil" | "round" => Some(Type::F64),
-            "sqrt" | "sin" | "cos" | "tan" => Some(Type::F64),
+            "sqrt" | "sin" | "cos" | "tan" | "exp" | "log" | "tanh" | "rand_float" | "list_get_f64" => Some(Type::F64),
+            "rand" | "rand_int" | "list_len" => Some(Type::I32),
+            "srand" | "list_set_f64" => Some(Type::Void),
             "to_hex" | "str_repeat" => Some(Type::String),
             _ => None,
         }
