@@ -204,6 +204,7 @@ checksum = "8d942b98df5e658f56f20d592c7f868833fe38115e65c33003d8cd224b0155da"
 name = "righton"
 version = "0.3.0"
 dependencies = [
+ "cc",
  "clap",
  "llvm-sys",
  "serde",

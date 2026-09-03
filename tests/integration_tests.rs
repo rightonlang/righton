@@ -535,7 +535,12 @@ mod tests {
         assert!(result.status.success());
         let ir = fs::read_to_string(&output).unwrap();
         assert!(ir.contains("@__rt_strlen"));
-        assert!(ir.contains("trunc i64"));
+        // After moving runtime to libro (C), __rt_strlen is now an external
+        // declaration (declare) rather than an inline definition. The helper
+        // no longer contains the trunc inside the emitted IR; truncation
+        // happens only for raw C-string cases via strlen. So check for the
+        // declaration instead.
+        assert!(ir.contains("declare i32 @__rt_strlen"));
 
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);
@@ -1841,7 +1846,7 @@ mod tests {
             String::from_utf8_lossy(&result.stderr)
         );
         let ir = fs::read_to_string(&output).unwrap();
-        assert!(ir.contains("define %String* @__rt_wrap_string"));
+        assert!(ir.contains("declare %String* @__rt_wrap_string"));
         assert!(ir.contains("call %String* @__rt_wrap_string"));
 
         let _ = fs::remove_file(input);

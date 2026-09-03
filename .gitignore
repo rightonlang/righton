@@ -27,9 +27,12 @@ node_modules/
 
 # windows
 /vcpkg.json
-/build.rs
 
 /arms_cache
+# libro build artifacts (keep sources, ignore binaries)
+libro/*.a
+libro/*.o
+perf.data
 example*
 !tests/
 !tests/**

@@ -1,64 +1,70 @@
+// Righton Standard Library (stdlib/std.ro)
+// Thin wrappers over the external C runtime `libro` (libro/src/libro.c).
+// Previously the implementations of __rt_* were emitted as LLVM IR from
+// src/compiler.rs::emit_runtime_helpers. Now they are only declared in
+// IR and linked from libro/libro.a via `gcc ... libro/libro.a -lm`.
+
 // String functions
-fn print(value):
+fn print(value: str):
     __rt_print_str(value)
 
-fn print_int(value):
+fn print_int(value: i32):
     __rt_print_int(value)
 
-fn print_float(value):
+fn print_float(value: f64):
     __rt_print_float(value)
 
-fn len(value):
+fn len(value: str):
     return __rt_strlen(value)
 
-fn read_file(path):
+fn read_file(path: str):
     return __rt_wrap_string(__rt_read_file(path))
 
-fn write_file(path, contents):
+fn write_file(path: str, contents: str):
     return __rt_write_file(path, contents)
 
 fn exit():
     __rt_exit(0)
 
-fn is_empty(value):
+fn is_empty(value: str):
     return __rt_strlen(value) == 0
 
 // String manipulation methods (receiver.method syntax)
-fn contains(s, sub):
+fn contains(s: str, sub: str):
     return __rt_contains(s, sub)
 
-fn starts_with(s, prefix):
+fn starts_with(s: str, prefix: str):
     return __rt_starts_with(s, prefix)
 
-fn ends_with(s, suffix):
+fn ends_with(s: str, suffix: str):
     return __rt_ends_with(s, suffix)
 
-fn substr(s, start, length):
+fn substr(s: str, start: i32, length: i32):
     return __rt_wrap_string(__rt_substr(s, start, length))
 
-fn trim(s):
+fn trim(s: str):
     return __rt_wrap_string(__rt_trim(s))
 
-fn to_uppercase(s):
+fn to_uppercase(s: str):
     return __rt_wrap_string(__rt_to_uppercase(s))
 
-fn to_lowercase(s):
+fn to_lowercase(s: str):
     return __rt_wrap_string(__rt_to_lowercase(s))
 
 fn to_string(v):
     return v
 
-fn str_repeat(s, count):
+fn str_repeat(s: str, count: i32):
     return __rt_wrap_string(__rt_str_repeat(s, count))
 
 // Parsing
-fn to_int(s):
+fn to_int(s: str):
     return __rt_to_int(s)
 
-fn to_float(s):
+fn to_float(s: str):
     return __rt_to_float(s)
 
-fn to_hex(n):
+fn to_hex(n: i32):
     return __rt_wrap_string(__rt_to_hex(n))
 
 // Math methods (receiver.method syntax)
@@ -67,28 +73,28 @@ fn abs(n):
         return -n
     return n
 
-fn abs_f(n):
+fn abs_f(n: f64):
     return __rt_abs(n)
 
-fn floor(n):
+fn floor(n: f64):
     return __rt_floor(n)
 
-fn ceil(n):
+fn ceil(n: f64):
     return __rt_ceil(n)
 
-fn round(n):
+fn round(n: f64):
     return __rt_round(n)
 
-fn sqrt(n):
+fn sqrt(n: f64):
     return __rt_sqrt(n)
 
-fn sin(n):
+fn sin(n: f64):
     return __rt_sin(n)
 
-fn cos(n):
+fn cos(n: f64):
     return __rt_cos(n)
 
-fn tan(n):
+fn tan(n: f64):
     return __rt_tan(n)
 
 fn min(a, b):

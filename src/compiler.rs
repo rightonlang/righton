@@ -84,15 +84,23 @@ impl Val {
     fn as_str(&self) -> String {
         match self {
             Val::Imm(n) => n.to_string(),
-            Val::ImmFloat(n) => n.to_string(),
+            Val::ImmFloat(n) => Self::format_float(*n),
             Val::Reg(r) => format!("%{}", r),
         }
     }
     fn as_float_str(&self) -> String {
         match self {
-            Val::ImmFloat(n) => n.to_string(),
-            Val::Imm(n) => n.to_string(),
+            Val::ImmFloat(n) => Self::format_float(*n),
+            Val::Imm(n) => format!("{}.0", n),
             Val::Reg(r) => format!("%{}", r),
+        }
+    }
+    fn format_float(n: f64) -> String {
+        let s = n.to_string();
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            s
+        } else {
+            format!("{}.0", s)
         }
     }
 }
@@ -1901,6 +1909,24 @@ impl LLVMTextGen {
             return builtin_types;
         }
 
+        // Stdlib wrappers that take list pointers (i8*) – hardcode to avoid
+        // inference treating list `i8*` as string. Without this, `list_len`
+        // would be inferred as String via the `i8*` string heuristic.
+        match func {
+            "list_len" | "std__list_len" => return vec!["i8*"],
+            "list_push" | "std__list_push" => return vec!["i8*", "i32"],
+            "list_pop" | "std__list_pop" => return vec!["i8*"],
+            "list_free" | "std__list_free" => return vec!["i8*"],
+            _ => {}
+        }
+        match self.resolve_function_name(func).as_str() {
+            "std__list_len" => return vec!["i8*"],
+            "std__list_push" => return vec!["i8*", "i32"],
+            "std__list_pop" => return vec!["i8*"],
+            "std__list_free" => return vec!["i8*"],
+            _ => {}
+        }
+
         let mut types = Vec::new();
         let resolved = self.resolve_function_name(func);
         for func_def in &self.flattened_funcs {
@@ -2036,6 +2062,28 @@ impl LLVMTextGen {
     }
 
     fn infer_param_type(&self, body: &[Expr], param: &str, known_params: &[String]) -> Type {
+        // Hardcode for list stdlib wrappers – inference via `i8*` is ambiguous
+        // with string `i8*`, and the generic heuristic would misclassify.
+        if let Some(cur) = &self.current_function {
+            if cur == "std__list_len" || cur == "list_len" {
+                if param == "lst" {
+                    return Type::Ptr;
+                }
+            }
+            if cur == "std__list_push" || cur == "list_push" {
+                if param == "lst" {
+                    return Type::Ptr;
+                }
+                if param == "val" {
+                    return Type::I32;
+                }
+            }
+            if cur == "std__list_pop" || cur == "list_pop" || cur == "std__list_free" || cur == "list_free" {
+                if param == "lst" {
+                    return Type::Ptr;
+                }
+            }
+        }
         let mut temp_locals: HashMap<String, (Type, String, bool)> = HashMap::new();
 
         // First: process all params BEFORE the one we're inferring
@@ -2123,8 +2171,18 @@ impl LLVMTextGen {
                             if let Expr::Identifier(n, _) = arg {
                                 if n == param {
                                     if let Some(expected) = pt(func, i) {
-                                        if expected == "i8*" || expected == "%String*" {
+                                        if expected == "%String*" {
                                             return true;
+                                        }
+                                        if expected == "i8*" {
+                                            // i8* is used for both raw strings and lists;
+                                            // only treat as string if not a list helper
+                                            if !func.starts_with("__rt_list")
+                                                && func != "__rt_free"
+                                                && func != "__rt_panic_bounds"
+                                            {
+                                                return true;
+                                            }
                                         }
                                     } else if func.starts_with("__rt_")
                                         || (stdlib_enabled
@@ -2700,6 +2758,7 @@ impl LLVMTextGen {
                 let iter_val = self.generate_int_expr(iterable, params, locals)?;
                 let loop_start = self.next_block_label("for_start");
                 let loop_body = self.next_block_label("for_body");
+                let loop_continue = self.next_block_label("for_continue");
                 let loop_end = self.next_block_label("for_end");
 
                 let counter_alloca = self.next_temp();
@@ -2716,7 +2775,7 @@ impl LLVMTextGen {
                 locals_for.insert(variable.clone(), (Type::I32, counter_alloca.clone(), false));
 
                 self.loop_label_stack
-                    .push((loop_start.clone(), loop_end.clone()));
+                    .push((loop_continue.clone(), loop_end.clone()));
 
                 writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_start).unwrap();
@@ -2748,7 +2807,8 @@ impl LLVMTextGen {
                 for stmt in &body.stmts {
                     self.generate_expr(stmt, params, &mut locals_for, return_ty)?;
                 }
-
+                writeln!(&mut self.functions, "  br label %{}", loop_continue).unwrap();
+                writeln!(&mut self.functions, "{}:", loop_continue).unwrap();
                 let new_counter = self.next_temp();
                 let cv = format!("%{}", counter_val);
                 writeln!(
@@ -2763,12 +2823,7 @@ impl LLVMTextGen {
                     new_counter, counter_alloca
                 )
                 .unwrap();
-
-                if return_ty != "void" && return_ty != "i32" {
-                } else {
-                    writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
-                }
-
+                writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_end).unwrap();
                 self.loop_label_stack.pop();
             }
@@ -2837,10 +2892,11 @@ impl LLVMTextGen {
 
                 let loop_start = self.next_block_label("for_start");
                 let loop_body = self.next_block_label("for_body");
+                let loop_continue = self.next_block_label("for_continue");
                 let loop_end = self.next_block_label("for_end");
 
                 self.loop_label_stack
-                    .push((loop_start.clone(), loop_end.clone()));
+                    .push((loop_continue.clone(), loop_end.clone()));
 
                 writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_start).unwrap();
@@ -2941,7 +2997,8 @@ impl LLVMTextGen {
                 for stmt in &body.stmts {
                     self.generate_expr(stmt, params, &mut locals_for, return_ty)?;
                 }
-
+                writeln!(&mut self.functions, "  br label %{}", loop_continue).unwrap();
+                writeln!(&mut self.functions, "{}:", loop_continue).unwrap();
                 let new_counter = self.next_temp();
                 writeln!(
                     &mut self.functions,
@@ -2955,7 +3012,6 @@ impl LLVMTextGen {
                     new_counter, counter_alloca
                 )
                 .unwrap();
-
                 writeln!(&mut self.functions, "  br label %{}", loop_start).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_end).unwrap();
                 self.loop_label_stack.pop();
@@ -2971,6 +3027,7 @@ impl LLVMTextGen {
                 let end_val = self.generate_int_expr(end, params, locals)?;
                 let loop_start_label = self.next_block_label("for_start");
                 let loop_body = self.next_block_label("for_body");
+                let loop_continue = self.next_block_label("for_continue");
                 let loop_end = self.next_block_label("for_end");
 
                 let counter_alloca = self.next_temp();
@@ -2987,7 +3044,7 @@ impl LLVMTextGen {
                 locals_for.insert(variable.clone(), (Type::I32, counter_alloca.clone(), false));
 
                 self.loop_label_stack
-                    .push((loop_start_label.clone(), loop_end.clone()));
+                    .push((loop_continue.clone(), loop_end.clone()));
 
                 writeln!(&mut self.functions, "  br label %{}", loop_start_label).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_start_label).unwrap();
@@ -3020,7 +3077,8 @@ impl LLVMTextGen {
                 for stmt in &body.stmts {
                     self.generate_expr(stmt, params, &mut locals_for, return_ty)?;
                 }
-
+                writeln!(&mut self.functions, "  br label %{}", loop_continue).unwrap();
+                writeln!(&mut self.functions, "{}:", loop_continue).unwrap();
                 let new_counter = self.next_temp();
                 writeln!(
                     &mut self.functions,
@@ -3034,7 +3092,6 @@ impl LLVMTextGen {
                     new_counter, counter_alloca
                 )
                 .unwrap();
-
                 writeln!(&mut self.functions, "  br label %{}", loop_start_label).unwrap();
                 writeln!(&mut self.functions, "{}:", loop_end).unwrap();
                 self.loop_label_stack.pop();
@@ -3617,6 +3674,31 @@ impl LLVMTextGen {
                                 .unwrap();
                                 args.push(format!("double %{}", loaded));
                             }
+                            Type::String => {
+                                parts.push("%s".to_string());
+                                let loaded = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = load %String*, %String** %{}",
+                                    loaded, alloca
+                                )
+                                .unwrap();
+                                let ptr = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
+                                    ptr, loaded
+                                )
+                                .unwrap();
+                                let str_val = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = load i8*, i8** %{}",
+                                    str_val, ptr
+                                )
+                                .unwrap();
+                                args.push(format!("i8* %{}", str_val));
+                            }
                             Type::Ptr => {
                                 parts.push("%s".to_string());
                                 let loaded = self.next_temp();
@@ -3629,8 +3711,15 @@ impl LLVMTextGen {
                                 args.push(format!("i8* %{}", loaded));
                             }
                             _ => {
-                                // fallback for unsupported types
-                                // handled as pointer
+                                parts.push("%s".to_string());
+                                let loaded = self.next_temp();
+                                writeln!(
+                                    &mut self.functions,
+                                    "  %{} = load i8*, i8** %{}",
+                                    loaded, alloca
+                                )
+                                .unwrap();
+                                args.push(format!("i8* %{}", loaded));
                             }
                         }
                     } else if let Some(idx) = params.iter().position(|p| p == name) {
@@ -6066,11 +6155,19 @@ impl LLVMTextGen {
             Expr::FString(elements, _) => {
                 let buf_ptr = self.next_temp();
                 self.emit_fstring_to_buffer(elements, params, locals, &buf_ptr)?;
+                // Use raw strlen for the temporary C-string buffer (not a RoString)
+                let len64 = self.next_temp();
+                writeln!(
+                    &mut self.functions,
+                    "  %{} = call i64 @strlen(i8* %{})",
+                    len64, buf_ptr
+                )
+                .unwrap();
                 let len = self.next_temp();
                 writeln!(
                     &mut self.functions,
-                    "  %{} = call i32 @__rt_strlen(i8* %{})",
-                    len, buf_ptr
+                    "  %{} = trunc i64 %{} to i32",
+                    len, len64
                 )
                 .unwrap();
                 let cap = self.next_temp();
@@ -6357,11 +6454,18 @@ impl LLVMTextGen {
                         buf_ptr, fmt_ptr, lhs_str, rhs_str
                     )
                     .unwrap();
+                    let concat_len64 = self.next_temp();
+                    writeln!(
+                        &mut self.functions,
+                        "  %{} = call i64 @strlen(i8* %{})",
+                        concat_len64, buf_ptr
+                    )
+                    .unwrap();
                     let concat_len = self.next_temp();
                     writeln!(
                         &mut self.functions,
-                        "  %{} = call i32 @__rt_strlen(i8* %{})",
-                        concat_len, buf_ptr
+                        "  %{} = trunc i64 %{} to i32",
+                        concat_len, concat_len64
                     )
                     .unwrap();
                     let concat_cap = self.next_temp();
@@ -6530,8 +6634,8 @@ impl LLVMTextGen {
                     parts.push(s.clone());
                 }
                 Expr::Identifier(name, _) => {
-                    parts.push("%s".to_string());
                     if let Some((Type::String, alloca, _)) = locals.get(name) {
+                        parts.push("%s".to_string());
                         let loaded = self.next_temp();
                         writeln!(
                             &mut self.functions,
@@ -6575,6 +6679,7 @@ impl LLVMTextGen {
                         .unwrap();
                         args.push(format!("double %{}", loaded));
                     } else if let Some((Type::Ptr, alloca, _)) = locals.get(name) {
+                        parts.push("%s".to_string());
                         let loaded = self.next_temp();
                         writeln!(
                             &mut self.functions,
@@ -6747,25 +6852,11 @@ impl LLVMTextGen {
             self.generate_ptr_expr(&args[0], params, locals, &path_ptr)?;
             let data_ptr = self.next_temp();
             self.generate_string_expr(&args[1], params, locals, &data_ptr)?;
-            let data_str = self.next_temp();
-            writeln!(
-                &mut self.functions,
-                "  %{} = getelementptr %String, %String* %{}, i32 0, i32 0",
-                data_str, data_ptr
-            )
-            .unwrap();
-            let data_i8 = self.next_temp();
-            writeln!(
-                &mut self.functions,
-                "  %{} = load i8*, i8** %{}",
-                data_i8, data_str
-            )
-            .unwrap();
             let status = self.next_temp();
             writeln!(
                 &mut self.functions,
-                "  %{} = call i32 @__rt_write_file(i8* %{}, i8* %{})",
-                status, path_ptr, data_i8
+                "  %{} = call i32 @__rt_write_file(i8* %{}, %String* %{})",
+                status, path_ptr, data_ptr
             )
             .unwrap();
             return Ok(Some(status));
@@ -7027,726 +7118,56 @@ impl LLVMTextGen {
             return;
         }
         self.runtime_helpers_emitted = true;
+        self.declare_runtime_helpers();
+        return;
+    }
 
-        let empty = self.emit_string_const("");
-        let rb = self.emit_string_const("rb");
-        let wb = self.emit_string_const("wb");
-
-        let mut helpers = String::new();
-        writeln!(&mut helpers, "define i32 @__rt_strlen(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  %tr = trunc i64 %len to i32").unwrap();
-        writeln!(&mut helpers, "  ret i32 %tr").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define void @__rt_print_str(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        let fmt_str = self.emit_string_const("%s\n");
-        writeln!(
-            &mut helpers,
-            "  %fmt = getelementptr [4 x i8], [4 x i8]* @{}, i32 0, i32 0",
-            fmt_str
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call i32 (i8*, ...) @printf(i8* %fmt, i8* %s)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  ret void").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define void @__rt_print_int(i32 %n) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        let fmt_str = self.emit_string_const("%d\n");
-        writeln!(
-            &mut helpers,
-            "  %fmt = getelementptr [4 x i8], [4 x i8]* @{}, i32 0, i32 0",
-            fmt_str
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call i32 (i8*, ...) @printf(i8* %fmt, i32 %n)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  ret void").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define void @__rt_print_float(double %n) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        let fmt_str = self.emit_string_const("%f\n");
-        writeln!(
-            &mut helpers,
-            "  %fmt = getelementptr [4 x i8], [4 x i8]* @{}, i32 0, i32 0",
-            fmt_str
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call i32 (i8*, ...) @printf(i8* %fmt, double %n)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  ret void").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define void @__rt_exit(i32 %code) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  call void @exit(i32 %code)").unwrap();
-        writeln!(&mut helpers, "  ret void").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i8* @__rt_read_file(i8* %path) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %mode = getelementptr [3 x i8], [3 x i8]* @{}, i32 0, i32 0",
-            rb
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %file = call i8* @fopen(i8* %path, i8* %mode)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %null = icmp eq i8* %file, null").unwrap();
-        writeln!(&mut helpers, "  br i1 %null, label %empty, label %read").unwrap();
-        writeln!(&mut helpers, "empty:").unwrap();
-        writeln!(&mut helpers, "  %buf0 = call i8* @malloc(i64 1)").unwrap();
-        writeln!(&mut helpers, "  store i8 0, i8* %buf0").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf0").unwrap();
-        writeln!(&mut helpers, "read:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %seek = call i32 @fseek(i8* %file, i64 0, i32 2)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %size = call i64 @ftell(i8* %file)").unwrap();
-        writeln!(&mut helpers, "  call void @rewind(i8* %file)").unwrap();
-        writeln!(&mut helpers, "  %alloc = add i64 %size, 1").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %readn = call i64 @fread(i8* %buf, i64 1, i64 %size, i8* %file)"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %end = getelementptr i8, i8* %buf, i64 %readn"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
-        writeln!(&mut helpers, "  call i32 @fclose(i8* %file)").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(
-            &mut helpers,
-            "define i32 @__rt_write_file(i8* %path, i8* %contents) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %mode = getelementptr [3 x i8], [3 x i8]* @{}, i32 0, i32 0",
-            wb
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %file = call i8* @fopen(i8* %path, i8* %mode)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %null = icmp eq i8* %file, null").unwrap();
-        writeln!(&mut helpers, "  br i1 %null, label %fail, label %write").unwrap();
-        writeln!(&mut helpers, "fail:").unwrap();
-        writeln!(&mut helpers, "  ret i32 -1").unwrap();
-        writeln!(&mut helpers, "write:").unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %contents)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %written = call i64 @fwrite(i8* %contents, i64 1, i64 %len, i8* %file)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  call i32 @fclose(i8* %file)").unwrap();
-        writeln!(&mut helpers, "  %ok = icmp eq i64 %written, %len").unwrap();
-        writeln!(&mut helpers, "  %res = select i1 %ok, i32 0, i32 -1").unwrap();
-        writeln!(&mut helpers, "  ret i32 %res").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        let whitespace = self.emit_string_const(" \t\n\r\x0c\x0b");
-        writeln!(
-            &mut helpers,
-            "define i32 @__rt_contains(i8* %s, i8* %sub) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %res = call i8* @strstr(i8* %s, i8* %sub)").unwrap();
-        writeln!(&mut helpers, "  %found = icmp ne i8* %res, null").unwrap();
-        writeln!(&mut helpers, "  %ret = zext i1 %found to i32").unwrap();
-        writeln!(&mut helpers, "  ret i32 %ret").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(
-            &mut helpers,
-            "define i32 @__rt_starts_with(i8* %s, i8* %prefix) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %plen = call i64 @strlen(i8* %prefix)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %res = call i32 @strncmp(i8* %s, i8* %prefix, i64 %plen)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %eq = icmp eq i32 %res, 0").unwrap();
-        writeln!(&mut helpers, "  %ret = zext i1 %eq to i32").unwrap();
-        writeln!(&mut helpers, "  ret i32 %ret").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(
-            &mut helpers,
-            "define i32 @__rt_ends_with(i8* %s, i8* %suffix) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %slen = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  %sublen = call i64 @strlen(i8* %suffix)").unwrap();
-        writeln!(&mut helpers, "  %tooshort = icmp ult i64 %slen, %sublen").unwrap();
-        writeln!(
-            &mut helpers,
-            "  br i1 %tooshort, label %false, label %check"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "check:").unwrap();
-        writeln!(&mut helpers, "  %off = sub i64 %slen, %sublen").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %start = getelementptr i8, i8* %s, i64 %off"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %res = call i32 @strncmp(i8* %start, i8* %suffix, i64 %sublen)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %eq = icmp eq i32 %res, 0").unwrap();
-        writeln!(&mut helpers, "  %ret = zext i1 %eq to i32").unwrap();
-        writeln!(&mut helpers, "  ret i32 %ret").unwrap();
-        writeln!(&mut helpers, "false:").unwrap();
-        writeln!(&mut helpers, "  ret i32 0").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(
-            &mut helpers,
-            "define i8* @__rt_substr(i8* %s, i32 %start, i32 %length) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len64 = sext i32 %length to i64").unwrap();
-        writeln!(&mut helpers, "  %alloc = add i64 %len64, 1").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(&mut helpers, "  %start64 = sext i32 %start to i64").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %src = getelementptr i8, i8* %s, i64 %start64"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %src, i64 %len64, i1 false)"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %end = getelementptr i8, i8* %buf, i64 %len64"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i8* @__rt_trim(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %ws = getelementptr [6 x i8], [6 x i8]* @{}, i32 0, i32 0",
-            whitespace
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %start_off = call i64 @strspn(i8* %s, i8* %ws)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %remaining = sub i64 %len, %start_off").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %start_ptr = getelementptr i8, i8* %s, i64 %start_off"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %end_off = call i64 @strcspn(i8* %start_ptr, i8* %ws)"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %trim_len = call i64 @llvm.umin.i64(i64 %remaining, i64 %end_off)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %alloc = add i64 %trim_len, 1").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %start_ptr, i64 %trim_len, i1 false)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %end = getelementptr i8, i8* %buf, i64 %trim_len"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i8* @__rt_to_uppercase(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  %alloc = add i64 %len, 1").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %s, i64 %alloc, i1 false)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  br label %loop").unwrap();
-        writeln!(&mut helpers, "loop:").unwrap();
-        writeln!(&mut helpers, "  %pos = phi i64 [0, %entry], [%next, %body]").unwrap();
-        writeln!(&mut helpers, "  %cmp = icmp eq i64 %pos, %len").unwrap();
-        writeln!(&mut helpers, "  br i1 %cmp, label %done, label %body").unwrap();
-        writeln!(&mut helpers, "body:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %ptr = getelementptr i8, i8* %buf, i64 %pos"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %ch = load i8, i8* %ptr").unwrap();
-        writeln!(&mut helpers, "  %ch32 = sext i8 %ch to i32").unwrap();
-        writeln!(&mut helpers, "  %up = call i32 @toupper(i32 %ch32)").unwrap();
-        writeln!(&mut helpers, "  %up8 = trunc i32 %up to i8").unwrap();
-        writeln!(&mut helpers, "  store i8 %up8, i8* %ptr").unwrap();
-        writeln!(&mut helpers, "  %next = add i64 %pos, 1").unwrap();
-        writeln!(&mut helpers, "  br label %loop").unwrap();
-        writeln!(&mut helpers, "done:").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i8* @__rt_to_lowercase(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  %alloc = add i64 %len, 1").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %alloc)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %buf, i8* %s, i64 %alloc, i1 false)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  br label %loop").unwrap();
-        writeln!(&mut helpers, "loop:").unwrap();
-        writeln!(&mut helpers, "  %pos = phi i64 [0, %entry], [%next, %body]").unwrap();
-        writeln!(&mut helpers, "  %cmp = icmp eq i64 %pos, %len").unwrap();
-        writeln!(&mut helpers, "  br i1 %cmp, label %done, label %body").unwrap();
-        writeln!(&mut helpers, "body:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %ptr = getelementptr i8, i8* %buf, i64 %pos"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %ch = load i8, i8* %ptr").unwrap();
-        writeln!(&mut helpers, "  %ch32 = sext i8 %ch to i32").unwrap();
-        writeln!(&mut helpers, "  %lo = call i32 @tolower(i32 %ch32)").unwrap();
-        writeln!(&mut helpers, "  %lo8 = trunc i32 %lo to i8").unwrap();
-        writeln!(&mut helpers, "  store i8 %lo8, i8* %ptr").unwrap();
-        writeln!(&mut helpers, "  %next = add i64 %pos, 1").unwrap();
-        writeln!(&mut helpers, "  br label %loop").unwrap();
-        writeln!(&mut helpers, "done:").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i32 @__rt_to_int(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %res = call i32 @atoi(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  ret i32 %res").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define double @__rt_to_float(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %res = call double @atof(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  ret double %res").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define double @__rt_floor(double %n) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %res = call double @floor(double %n)").unwrap();
-        writeln!(&mut helpers, "  ret double %res").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define double @__rt_ceil(double %n) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %res = call double @ceil(double %n)").unwrap();
-        writeln!(&mut helpers, "  ret double %res").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define double @__rt_round(double %n) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %res = call double @round(double %n)").unwrap();
-        writeln!(&mut helpers, "  ret double %res").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i8* @__rt_read_line() {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 1024)").unwrap();
-        writeln!(&mut helpers, "  %stdin_ptr = load i8*, i8** @stdin").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %res = call i8* @fgets(i8* %buf, i32 1024, i8* %stdin_ptr)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %null = icmp eq i8* %res, null").unwrap();
-        writeln!(&mut helpers, "  br i1 %null, label %empty, label %strip_nl").unwrap();
-        writeln!(&mut helpers, "empty:").unwrap();
-        writeln!(&mut helpers, "  store i8 0, i8* %buf").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "strip_nl:").unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %buf)").unwrap();
-        writeln!(&mut helpers, "  %last_off = sub i64 %len, 1").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %last_ptr = getelementptr i8, i8* %buf, i64 %last_off"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %last_ch = load i8, i8* %last_ptr").unwrap();
-        writeln!(&mut helpers, "  %is_nl = icmp eq i8 %last_ch, 10").unwrap();
-        writeln!(&mut helpers, "  br i1 %is_nl, label %strip, label %ret").unwrap();
-        writeln!(&mut helpers, "strip:").unwrap();
-        writeln!(&mut helpers, "  store i8 0, i8* %last_ptr").unwrap();
-        writeln!(&mut helpers, "  br label %ret").unwrap();
-        writeln!(&mut helpers, "ret:").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i8* @__rt_to_string_int(i32 %n) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 64)").unwrap();
-        let fmt_d = self.emit_string_const("%d");
-        writeln!(
-            &mut helpers,
-            "  %fmt = getelementptr [3 x i8], [3 x i8]* @{}, i32 0, i32 0",
-            fmt_d
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, i32 %n)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(
-            &mut helpers,
-            "define i8* @__rt_to_string_float(double %n) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 64)").unwrap();
-        let fmt_f = self.emit_string_const("%f");
-        writeln!(
-            &mut helpers,
-            "  %fmt = getelementptr [3 x i8], [3 x i8]* @{}, i32 0, i32 0",
-            fmt_f
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, double %n)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define void @__rt_free(i8* %ptr) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %null = icmp eq i8* %ptr, null").unwrap();
-        writeln!(&mut helpers, "  br i1 %null, label %done, label %free").unwrap();
-        writeln!(&mut helpers, "free:").unwrap();
-        writeln!(&mut helpers, "  call void @free(i8* %ptr)").unwrap();
-        writeln!(&mut helpers, "  br label %done").unwrap();
-        writeln!(&mut helpers, "done:").unwrap();
-        writeln!(&mut helpers, "  ret void").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define %String* @__rt_wrap_string(i8* %s) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  %len32 = trunc i64 %len to i32").unwrap();
-        writeln!(&mut helpers, "  %str = call i8* @malloc(i64 12)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %ptr_gep = getelementptr i8, i8* %str, i32 0"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %ptr_field = bitcast i8* %ptr_gep to i8**").unwrap();
-        writeln!(&mut helpers, "  store i8* %s, i8** %ptr_field").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %len_gep = getelementptr i8, i8* %str, i32 4"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %len_field = bitcast i8* %len_gep to i32*").unwrap();
-        writeln!(&mut helpers, "  store i32 %len32, i32* %len_field").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %cap_gep = getelementptr i8, i8* %str, i32 8"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %cap_field = bitcast i8* %cap_gep to i32*").unwrap();
-        writeln!(&mut helpers, "  store i32 %len32, i32* %cap_field").unwrap();
-        writeln!(&mut helpers, "  %result = bitcast i8* %str to %String*").unwrap();
-        writeln!(&mut helpers, "  ret %String* %result").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        // Bounds check panic
-        let _bounds_msg = self.emit_string_const("list index out of bounds");
-        writeln!(&mut helpers, "define void @__rt_panic_bounds(i8* %msg) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  call void @__rt_print_str(i8* %msg)").unwrap();
-        writeln!(&mut helpers, "  call void @__rt_exit(i32 1)").unwrap();
-        writeln!(&mut helpers, "  unreachable").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        // List runtime helpers
-        writeln!(&mut helpers, "define i32 @__rt_list_len(i8* %list) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %len_ptr = getelementptr i8, i8* %list, i32 4"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %len_i32 = bitcast i8* %len_ptr to i32*").unwrap();
-        writeln!(&mut helpers, "  %len = load i32, i32* %len_i32").unwrap();
-        writeln!(&mut helpers, "  ret i32 %len").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(
-            &mut helpers,
-            "define i8* @__rt_list_push(i8* %list, i32 %val) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(&mut helpers, "  %cap_ptr = bitcast i8* %list to i32*").unwrap();
-        writeln!(&mut helpers, "  %cap = load i32, i32* %cap_ptr").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %len_gep = getelementptr i8, i8* %list, i32 4"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %len_ptr = bitcast i8* %len_gep to i32*").unwrap();
-        writeln!(&mut helpers, "  %len = load i32, i32* %len_ptr").unwrap();
-        writeln!(&mut helpers, "  %needs_grow = icmp eq i32 %len, %cap").unwrap();
-        writeln!(
-            &mut helpers,
-            "  br i1 %needs_grow, label %grow, label %store"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "grow:").unwrap();
-        writeln!(&mut helpers, "  %newcap = mul i32 %cap, 2").unwrap();
-        writeln!(&mut helpers, "  %cap_zero = icmp eq i32 %newcap, 0").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %newcap2 = select i1 %cap_zero, i32 4, i32 %newcap"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %old_data_bytes = mul i32 %cap, 4").unwrap();
-        writeln!(&mut helpers, "  %old_total = add i32 %old_data_bytes, 8").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %old_total_i64 = sext i32 %old_total to i64"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %new_data_bytes = mul i32 %newcap2, 4").unwrap();
-        writeln!(&mut helpers, "  %new_total = add i32 %new_data_bytes, 8").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %new_total_i64 = sext i32 %new_total to i64"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %newlist = call i8* @malloc(i64 %new_total_i64)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %newlist, i8* %list, i64 %old_total_i64, i1 false)").unwrap();
-        writeln!(&mut helpers, "  call void @free(i8* %list)").unwrap();
-        writeln!(&mut helpers, "  store i32 %newcap2, i32* %newlist").unwrap();
-        writeln!(&mut helpers, "  br label %store").unwrap();
-        writeln!(&mut helpers, "store:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %cur_list = phi i8* [%list, %entry], [%newlist, %grow]"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %cur_len = phi i32 [%len, %entry], [%len, %grow]"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %elem_off = mul i32 %cur_len, 4").unwrap();
-        writeln!(&mut helpers, "  %elem_off_total = add i32 %elem_off, 8").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %elem_gep = getelementptr i8, i8* %cur_list, i32 %elem_off_total"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %elem_ptr = bitcast i8* %elem_gep to i32*").unwrap();
-        writeln!(&mut helpers, "  store i32 %val, i32* %elem_ptr").unwrap();
-        writeln!(&mut helpers, "  %new_len = add i32 %cur_len, 1").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %len_store_gep = getelementptr i8, i8* %cur_list, i32 4"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  %len_store_ptr = bitcast i8* %len_store_gep to i32*"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  store i32 %new_len, i32* %len_store_ptr").unwrap();
-        writeln!(&mut helpers, "  ret i8* %cur_list").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        writeln!(&mut helpers, "define i32 @__rt_list_pop(i8* %list) {{").unwrap();
-        writeln!(&mut helpers, "entry:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %len_gep = getelementptr i8, i8* %list, i32 4"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %len_ptr = bitcast i8* %len_gep to i32*").unwrap();
-        writeln!(&mut helpers, "  %len = load i32, i32* %len_ptr").unwrap();
-        writeln!(&mut helpers, "  %is_empty = icmp eq i32 %len, 0").unwrap();
-        writeln!(&mut helpers, "  br i1 %is_empty, label %empty, label %pop").unwrap();
-        writeln!(&mut helpers, "empty:").unwrap();
-        writeln!(&mut helpers, "  ret i32 0").unwrap();
-        writeln!(&mut helpers, "pop:").unwrap();
-        writeln!(&mut helpers, "  %new_len = sub i32 %len, 1").unwrap();
-        writeln!(&mut helpers, "  %elem_off = mul i32 %new_len, 4").unwrap();
-        writeln!(&mut helpers, "  %elem_off_total = add i32 %elem_off, 8").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %elem_gep = getelementptr i8, i8* %list, i32 %elem_off_total"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %elem_ptr = bitcast i8* %elem_gep to i32*").unwrap();
-        writeln!(&mut helpers, "  %val = load i32, i32* %elem_ptr").unwrap();
-        writeln!(&mut helpers, "  store i32 %new_len, i32* %len_ptr").unwrap();
-        writeln!(&mut helpers, "  ret i32 %val").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        // __rt_to_hex(i32) -> i8*
-        let hex_fmt = self.emit_string_const("%08x");
-        writeln!(&mut helpers, "define i8* @__rt_to_hex(i32 %n) {{").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 11)").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %fmt = getelementptr [5 x i8], [5 x i8]* @{}, i32 0, i32 0",
-            hex_fmt
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, i32 %n)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        // __rt_str_repeat(i8*, i32) -> i8*
-        writeln!(
-            &mut helpers,
-            "define i8* @__rt_str_repeat(i8* %s, i32 %count) {{"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %len = call i64 @strlen(i8* %s)").unwrap();
-        writeln!(&mut helpers, "  %count64 = sext i32 %count to i64").unwrap();
-        writeln!(&mut helpers, "  %total = mul i64 %len, %count64").unwrap();
-        writeln!(&mut helpers, "  %total_plus1 = add i64 %total, 1").unwrap();
-        writeln!(&mut helpers, "  %buf = call i8* @malloc(i64 %total_plus1)").unwrap();
-        writeln!(&mut helpers, "  %cmp = icmp eq i64 %len, 0").unwrap();
-        writeln!(&mut helpers, "  br i1 %cmp, label %done, label %loop").unwrap();
-        writeln!(&mut helpers, "loop:").unwrap();
-        writeln!(&mut helpers, "  %i = phi i32 [0, %0], [%next, %loop]").unwrap();
-        writeln!(&mut helpers, "  %i64 = sext i32 %i to i64").unwrap();
-        writeln!(&mut helpers, "  %off = mul i64 %i64, %len").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %dst = getelementptr i8, i8* %buf, i64 %off"
-        )
-        .unwrap();
-        writeln!(
-            &mut helpers,
-            "  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %dst, i8* %s, i64 %len, i1 false)"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  %next = add i32 %i, 1").unwrap();
-        writeln!(&mut helpers, "  %done_flag = icmp eq i32 %next, %count").unwrap();
-        writeln!(&mut helpers, "  br i1 %done_flag, label %done, label %loop").unwrap();
-        writeln!(&mut helpers, "done:").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %end = getelementptr i8, i8* %buf, i64 %total"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  store i8 0, i8* %end").unwrap();
-        writeln!(&mut helpers, "  ret i8* %buf").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        // Math: sqrt, sin, cos, tan
-        writeln!(&mut helpers, "define double @__rt_sqrt(double %n) {{").unwrap();
-        writeln!(&mut helpers, "  %r = call double @sqrt(double %n)").unwrap();
-        writeln!(&mut helpers, "  ret double %r").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-        writeln!(&mut helpers, "define double @__rt_sin(double %n) {{").unwrap();
-        writeln!(&mut helpers, "  %r = call double @sin(double %n)").unwrap();
-        writeln!(&mut helpers, "  ret double %r").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-        writeln!(&mut helpers, "define double @__rt_cos(double %n) {{").unwrap();
-        writeln!(&mut helpers, "  %r = call double @cos(double %n)").unwrap();
-        writeln!(&mut helpers, "  ret double %r").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-        writeln!(&mut helpers, "define double @__rt_tan(double %n) {{").unwrap();
-        writeln!(&mut helpers, "  %r = call double @tan(double %n)").unwrap();
-        writeln!(&mut helpers, "  ret double %r").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        // __rt_abs (for f64)
-        writeln!(&mut helpers, "define double @__rt_abs(double %n) {{").unwrap();
-        writeln!(&mut helpers, "  %cmp = fcmp olt double %n, 0.0").unwrap();
-        writeln!(&mut helpers, "  %neg = fsub double -0.0, %n").unwrap();
-        writeln!(
-            &mut helpers,
-            "  %r = select i1 %cmp, double %neg, double %n"
-        )
-        .unwrap();
-        writeln!(&mut helpers, "  ret double %r").unwrap();
-        writeln!(&mut helpers, "}}\n").unwrap();
-
-        // Declare llvm intrinsics used
-        writeln!(&mut helpers, "declare void @llvm.memcpy.p0i8.p0i8.i64(i8* noalias nocapture writeonly, i8* noalias nocapture readonly, i64, i1 immarg)\n").unwrap();
-        writeln!(&mut helpers, "declare i64 @llvm.umin.i64(i64, i64)\n").unwrap();
-
-        self.functions.push_str(&helpers);
-        let _ = empty;
+    fn declare_runtime_helpers(&mut self) {
+        // Declarations for the external C runtime (libro/src/libro.c).
+        // The definitions are no longer emitted as IR; they are linked
+        // from libro/libro.a. This keeps compiler.rs focused on codegen.
+        let mut decls = String::new();
+        // String helpers (RoString* = %String*)
+        writeln!(&mut decls, "declare i32 @__rt_strlen(%String*)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_strlen_cstr(i8*)").unwrap();
+        writeln!(&mut decls, "declare void @__rt_print_str(%String*)").unwrap();
+        writeln!(&mut decls, "declare void @__rt_print_int(i32)").unwrap();
+        writeln!(&mut decls, "declare void @__rt_print_float(double)").unwrap();
+        writeln!(&mut decls, "declare void @__rt_exit(i32)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_read_file(i8*)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_write_file(i8*, %String*)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_contains(%String*, %String*)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_starts_with(%String*, %String*)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_ends_with(%String*, %String*)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_substr(%String*, i32, i32)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_trim(%String*)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_to_uppercase(%String*)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_to_lowercase(%String*)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_to_int(%String*)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_to_float(%String*)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_floor(double)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_ceil(double)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_round(double)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_read_line()").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_to_string_int(i32)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_to_string_float(double)").unwrap();
+        writeln!(&mut decls, "declare void @__rt_free(i8*)").unwrap();
+        writeln!(&mut decls, "declare %String* @__rt_wrap_string(i8*)").unwrap();
+        writeln!(&mut decls, "declare void @__rt_panic_bounds(i8*)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_list_len(i8*)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_list_push(i8*, i32)").unwrap();
+        writeln!(&mut decls, "declare i32 @__rt_list_pop(i8*)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_to_hex(i32)").unwrap();
+        writeln!(&mut decls, "declare i8* @__rt_str_repeat(%String*, i32)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_sqrt(double)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_sin(double)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_cos(double)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_tan(double)").unwrap();
+        writeln!(&mut decls, "declare double @__rt_abs(double)").unwrap();
+        // LLVM intrinsics used by codegen (still needed as declarations)
+        writeln!(&mut decls, "declare void @llvm.memcpy.p0i8.p0i8.i64(i8* noalias nocapture writeonly, i8* noalias nocapture readonly, i64, i1 immarg)").unwrap();
+        writeln!(&mut decls, "declare i64 @llvm.umin.i64(i64, i64)").unwrap();
+        self.functions.push_str(&decls);
     }
 
     fn emit_asm_call(
